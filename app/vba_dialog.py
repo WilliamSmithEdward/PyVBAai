@@ -9,7 +9,6 @@ No COM or file mutation is performed - the user pastes into Excel's VBA editor.
 from __future__ import annotations
 
 import os
-import subprocess
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFont

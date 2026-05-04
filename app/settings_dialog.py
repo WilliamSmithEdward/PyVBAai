@@ -258,13 +258,13 @@ class SettingsDialog(QDialog):
         self._include_named.setChecked(_qbool(s.value("context/include_named_ranges", True)))
         max_rows_enabled = _qbool(s.value("context/max_rows_enabled", False))
         self._max_rows_enabled.setChecked(max_rows_enabled)
-        self._max_rows_spin.setValue(int(s.value("context/max_rows", 50)))
+        self._max_rows_spin.setValue(int(str(s.value("context/max_rows", 50))))
         self._max_rows_spin.setEnabled(max_rows_enabled)
         for key, cb in self._fmt_checks.items():
             cb.setChecked(_qbool(s.value(f"context/fmt_{key}", True)))
 
         # Backups
-        self._max_backups_spin.setValue(int(s.value("backups/max_keep", 20)))
+        self._max_backups_spin.setValue(int(str(s.value("backups/max_keep", 20))))
         # Appearance
         self._dark_mode.setChecked(_qbool(s.value("appearance/dark_mode", True)))
 
@@ -292,9 +292,9 @@ class SettingsDialog(QDialog):
     def load_context_config() -> ContextConfig:
         """Load context config from QSettings without opening the dialog."""
         s = get_settings()
-        excluded_sheets = list(s.value("context/excluded_sheets", []) or [])
-        excluded_vba    = list(s.value("context/excluded_vba",    []) or [])
-        excluded_area_pairs = list(s.value("context/excluded_areas", []) or [])
+        excluded_sheets = list(s.value("context/excluded_sheets", []) or [])  # type: ignore[arg-type]
+        excluded_vba    = list(s.value("context/excluded_vba",    []) or [])  # type: ignore[arg-type]
+        excluded_area_pairs = list(s.value("context/excluded_areas", []) or [])  # type: ignore[arg-type]
         excluded_areas: dict[str, list[str]] = {}
         for pair in excluded_area_pairs:
             if "||" in pair:
@@ -302,7 +302,7 @@ class SettingsDialog(QDialog):
                 excluded_areas.setdefault(sname, []).append(aaddr)
         max_rows: int | None = None
         if _qbool(s.value("context/max_rows_enabled", False)):
-            max_rows = int(s.value("context/max_rows", 50))
+            max_rows = int(str(s.value("context/max_rows", 50)))
         fmt_include: set[str] = {
             key for key in ALL_FMT_FIELDS
             if _qbool(s.value(f"context/fmt_{key}", True))
@@ -324,7 +324,7 @@ class SettingsDialog(QDialog):
 
     @staticmethod
     def load_max_backups() -> int:
-        return int(get_settings().value("backups/max_keep", 20))
+        return int(str(get_settings().value("backups/max_keep", 20)))
 
     @staticmethod
     def load_dark_mode() -> bool:

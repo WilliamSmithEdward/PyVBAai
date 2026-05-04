@@ -344,11 +344,25 @@ def _set_format(owb: Any, p: dict) -> None:
     try:
         min_col, min_row, max_col, max_row = openpyxl.utils.range_boundaries(rng)
         assert min_col is not None and min_row is not None and max_col is not None and max_row is not None
+        # Clamp to the sheet's actual used rows/cols to avoid iterating millions
+        # of empty cells for whole-column/row refs like "A:H" or "1:3".
+        max_row = min(max_row, ws.max_row or 1)
+        max_col = min(max_col, ws.max_column or 1)
         cells = [ws.cell(row=r, column=c)
                  for r in range(min_row, max_row + 1)
                  for c in range(min_col, max_col + 1)]
     except Exception:  # noqa: BLE001
-        cells = [ws[rng]]
+        # ws[rng] for multi-cell refs returns tuples of tuples; flatten them
+        raw = ws[rng]
+        if isinstance(raw, tuple):
+            cells = []
+            for item in raw:
+                if isinstance(item, tuple):
+                    cells.extend(item)
+                else:
+                    cells.append(item)
+        else:
+            cells = [raw]
 
     for cell in cells:
         if "number_format" in p:

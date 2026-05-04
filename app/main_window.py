@@ -59,6 +59,7 @@ class MainWindow(QMainWindow):
         self._new_wb_worker: NewWorkbookWorker | None = None
         self._pending_response: AIResponse | None = None
         self._pending_vba_changes: list = []
+        self._pending_vba_after_reload: list = []
         self._pending_user_message: str | None = None  # queued while stale reload runs
         self._dark_mode: bool = SettingsDialog.load_dark_mode()
 
@@ -273,9 +274,9 @@ class MainWindow(QMainWindow):
 
         # If a write just completed and there are pending VBA changes, show
         # the dialog now that the workbook has fully reloaded.
-        pending_vba = getattr(self, "_pending_vba_changes", [])
+        pending_vba = self._pending_vba_after_reload
         if pending_vba:
-            self._pending_vba_changes = []
+            self._pending_vba_after_reload = []
             self._show_vba_dialog(pending_vba)
 
     def _on_reader_error(self, err: str) -> None:
@@ -392,21 +393,23 @@ class MainWindow(QMainWindow):
         self._on_user_message(f"Please revise the plan: {note}")
 
     def _on_write_done(self, backup_path: str, saved_path: str) -> None:
-        self._chat.set_input_enabled(True)
         bname = os.path.basename(backup_path)
         self._chat.add_message(
             f"Changes applied successfully.\nBackup saved as `{bname}`.\n\n"
             "_Re-reading workbook to update context..._",
             "system",
         )
+        # Snapshot and clear VBA changes NOW so no subsequent reload can re-show them.
+        pending_vba = self._pending_vba_changes
+        self._pending_vba_changes = []
         self._pending_response = None
         if self._wb:
+            self._pending_vba_after_reload = pending_vba
             self.load_file(saved_path)
         else:
-            # No workbook to reload — show VBA dialog immediately if needed
-            pending_vba = getattr(self, "_pending_vba_changes", [])
+            # No workbook to reload — re-enable input and show VBA dialog immediately.
+            self._chat.set_input_enabled(True)
             if pending_vba:
-                self._pending_vba_changes = []
                 self._show_vba_dialog(pending_vba)
 
     def _show_vba_dialog(self, vba_changes: list) -> None:
@@ -448,7 +451,9 @@ class MainWindow(QMainWindow):
     # ── Theme ──────────────────────────────────────────────────────────────────
 
     def _apply_current_theme(self) -> None:
-        apply_theme(QApplication.instance(), self._dark_mode)
+        app = QApplication.instance()
+        if isinstance(app, QApplication):
+            apply_theme(app, self._dark_mode)
         self._theme_btn.setText("Light" if self._dark_mode else "Dark")
         self._wb_panel.set_accent("#89b4fa" if self._dark_mode else "#1e66f5")
 
