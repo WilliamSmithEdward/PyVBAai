@@ -425,6 +425,76 @@ def _set_format(owb: Any, p: dict) -> None:
             )
 
 
+# ── sheet view / dimension operations ────────────────────────────────────────
+
+def _freeze_panes(owb: Any, p: dict) -> None:
+    """Freeze rows/columns at a cell.  cell='' or absent to unfreeze."""
+    ws = _get_openpyxl_sheet(owb, p["sheet"])
+    cell = (p.get("cell") or "").strip() or None
+    ws.freeze_panes = cell
+
+
+def _set_col_width(owb: Any, p: dict) -> None:
+    """Set column width.  columns='A' or 'A:D', width in Excel character units."""
+    from openpyxl.utils import column_index_from_string, get_column_letter
+    ws = _get_openpyxl_sheet(owb, p["sheet"])
+    width = float(p["width"])
+    col_spec = str(p["columns"]).strip().upper()
+    if ":" in col_spec:
+        start_col, end_col = col_spec.split(":", 1)
+        for idx in range(column_index_from_string(start_col), column_index_from_string(end_col) + 1):
+            ws.column_dimensions[get_column_letter(idx)].width = width
+    else:
+        ws.column_dimensions[col_spec].width = width
+
+
+def _set_row_height(owb: Any, p: dict) -> None:
+    """Set row height in points."""
+    ws = _get_openpyxl_sheet(owb, p["sheet"])
+    ws.row_dimensions[int(p["row"])].height = float(p["height"])
+
+
+def _insert_rows(owb: Any, p: dict) -> None:
+    """Insert blank rows above 'row' (1-based)."""
+    ws = _get_openpyxl_sheet(owb, p["sheet"])
+    ws.insert_rows(int(p["row"]), int(p.get("count", 1)))
+
+
+def _delete_rows(owb: Any, p: dict) -> None:
+    """Delete rows starting at 'row' (1-based)."""
+    ws = _get_openpyxl_sheet(owb, p["sheet"])
+    ws.delete_rows(int(p["row"]), int(p.get("count", 1)))
+
+
+def _insert_cols(owb: Any, p: dict) -> None:
+    """Insert blank columns before 'col' (letter, e.g. 'B')."""
+    from openpyxl.utils import column_index_from_string
+    ws = _get_openpyxl_sheet(owb, p["sheet"])
+    ws.insert_cols(column_index_from_string(str(p["col"]).strip().upper()), int(p.get("count", 1)))
+
+
+def _delete_cols(owb: Any, p: dict) -> None:
+    """Delete columns starting at 'col' (letter)."""
+    from openpyxl.utils import column_index_from_string
+    ws = _get_openpyxl_sheet(owb, p["sheet"])
+    ws.delete_cols(column_index_from_string(str(p["col"]).strip().upper()), int(p.get("count", 1)))
+
+
+def _set_tab_color(owb: Any, p: dict) -> None:
+    """Set the sheet tab color.  color is RRGGBB or AARRGGBB.  '' to clear."""
+    from openpyxl.styles.colors import Color
+    ws = _get_openpyxl_sheet(owb, p["name"])
+    color_str = (p.get("color") or "").strip()
+    ws.sheet_properties.tabColor = Color(rgb=_to_argb(color_str)) if color_str else None
+
+
+def _set_auto_filter(owb: Any, p: dict) -> None:
+    """Set or clear the auto-filter on a sheet.  range='' to clear."""
+    ws = _get_openpyxl_sheet(owb, p["sheet"])
+    rng = (p.get("range") or "").strip()
+    ws.auto_filter.ref = rng or None
+
+
 # ── VBA via COM ───────────────────────────────────────────────────────────────
 
 def _apply_vba_via_com(file_path: str, changes: list[Change]) -> None:
@@ -550,6 +620,15 @@ _OPENPYXL_HANDLERS.update({
     "unhide_sheet":      _unhide_sheet,
     "create_table":       _create_table,
     "delete_table":       _delete_table,
+    "freeze_panes":       _freeze_panes,
+    "set_col_width":      _set_col_width,
+    "set_row_height":     _set_row_height,
+    "insert_rows":        _insert_rows,
+    "delete_rows":        _delete_rows,
+    "insert_cols":        _insert_cols,
+    "delete_cols":        _delete_cols,
+    "set_tab_color":      _set_tab_color,
+    "auto_filter":        _set_auto_filter,
     "set_named_range":   _add_named_range,
     "delete_named_range": _delete_named_range,
     "merge_cells":       _merge_cells,

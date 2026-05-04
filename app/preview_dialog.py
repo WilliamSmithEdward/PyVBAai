@@ -40,8 +40,17 @@ _OP_META: dict[str, tuple[str, str]] = {
     "set_vba":            ("", "Update VBA Module"),
     "add_vba_module":     ("", "Add VBA Module"),
     "delete_vba_module":  ("", "Delete VBA Module"),
-    "create_table":        ("", "Create Table"),
-    "delete_table":        ("", "Delete Table"),
+    "create_table":       ("", "Create Table"),
+    "delete_table":       ("", "Delete Table"),
+    "freeze_panes":       ("", "Freeze Panes"),
+    "set_col_width":      ("", "Set Column Width"),
+    "set_row_height":     ("", "Set Row Height"),
+    "insert_rows":        ("", "Insert Rows"),
+    "delete_rows":        ("", "Delete Rows"),
+    "insert_cols":        ("", "Insert Columns"),
+    "delete_cols":        ("", "Delete Columns"),
+    "set_tab_color":      ("", "Set Tab Color"),
+    "auto_filter":        ("", "Set Auto-Filter"),
     "set_named_range":    ("", "Set Named Range"),
     "add_named_range":    ("", "Add Named Range"),
     "delete_named_range": ("", "Delete Named Range"),
@@ -135,6 +144,23 @@ def _format_details(op: str, p: dict) -> str:  # noqa: PLR0911
         return f"Sheet: {p.get('sheet','')}   Range: {p.get('range','')}   Name: {p.get('name','')}   Style: {p.get('style','TableStyleMedium9')}"
     if op == "delete_table":
         return f"Sheet: {p.get('sheet','')}   Name: {p.get('name','')}"
+    if op == "freeze_panes":
+        cell = p.get('cell', '')
+        return f"Sheet: {p.get('sheet','')}   {'Unfreeze' if not cell else f'Freeze at {cell}'}"
+    if op == "set_col_width":
+        return f"Sheet: {p.get('sheet','')}   Columns: {p.get('columns','')}   Width: {p.get('width','')}"
+    if op == "set_row_height":
+        return f"Sheet: {p.get('sheet','')}   Row: {p.get('row','')}   Height: {p.get('height','')}"
+    if op in ("insert_rows", "delete_rows"):
+        return f"Sheet: {p.get('sheet','')}   Row: {p.get('row','')}   Count: {p.get('count',1)}"
+    if op in ("insert_cols", "delete_cols"):
+        return f"Sheet: {p.get('sheet','')}   Col: {p.get('col','')}   Count: {p.get('count',1)}"
+    if op == "set_tab_color":
+        color = p.get('color', '')
+        return f"Sheet: {p.get('name','')}   {'Clear color' if not color else f'Color: #{color}'}"
+    if op == "auto_filter":
+        rng = p.get('range', '')
+        return f"Sheet: {p.get('sheet','')}   {'Clear filter' if not rng else f'Range: {rng}'}"
     if op in ("set_named_range", "add_named_range"):
         return f"{p.get('name','')}  =  {p.get('refers_to','')}"
     if op == "delete_named_range":

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any
+from typing import Any, cast
 
 from models.conversation import AIResponse, Change
 
@@ -86,6 +86,17 @@ border values: "<style>" or "<style>:<RRGGBB>"  (e.g. "thin", "medium:FF0000")
 {"type":"add_vba_module",    "name":"NewModule",    "code":"..."}
 {"type":"delete_vba_module", "name":"ModuleName"}
 
+### Rows & Columns
+{"type":"insert_rows",   "sheet":"S", "row":3, "count":1}
+{"type":"delete_rows",   "sheet":"S", "row":3, "count":1}
+{"type":"insert_cols",   "sheet":"S", "col":"B", "count":1}
+{"type":"delete_cols",   "sheet":"S", "col":"B", "count":1}
+{"type":"set_col_width", "sheet":"S", "columns":"A",   "width":20}  -- columns can be "A" or "A:D"
+{"type":"set_row_height","sheet":"S", "row":1,   "height":30}  -- height in points
+{"type":"freeze_panes",  "sheet":"S", "cell":"B2"}  -- freeze rows above and cols left of cell; cell="" to unfreeze
+{"type":"auto_filter",   "sheet":"S", "range":"A1:D1"}  -- range="" to clear
+{"type":"set_tab_color", "name":"Sheet1", "color":"FF0000"}  -- color is RRGGBB; color="" to clear
+
 ### Tables (Excel ListObject)
 {"type":"create_table", "sheet":"Sheet1", "range":"A1:D101", "name":"PostsTable", "style":"TableStyleMedium9"}
 {"type":"delete_table", "sheet":"Sheet1", "name":"PostsTable"}
@@ -153,9 +164,11 @@ class AIClient:
             *conversation_messages,
         ]
 
+        from openai.types.chat import ChatCompletionMessageParam
+
         response = self.client.chat.completions.create(
             model=self.model,
-            messages=full_messages,
+            messages=cast(list[ChatCompletionMessageParam], full_messages),
             response_format={"type": "json_object"},
             temperature=0.1,
         )
