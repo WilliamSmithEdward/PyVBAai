@@ -129,16 +129,19 @@ class TestAIWorker:
         assert w._context == "context text"
         assert w._model == "gpt-4o-mini"
 
-    def test_default_model_is_gpt4o(self):
-        w = AIWorker([], "ctx")
-        assert w._model == "gpt-4o"
+    def test_missing_model_raises(self):
+        # AIWorker no longer has a fallback default — the user must pick a
+        # model in the toolbar before sending.
+        import pytest
+        with pytest.raises(ValueError, match="model"):
+            AIWorker([], "ctx", model="")
 
     def test_finished_signal_on_success(self):
         from models.conversation import AIResponse
         response = AIResponse(message="Done")
         results = []
 
-        w = AIWorker([{"role": "user", "content": "test"}], "ctx")
+        w = AIWorker([{"role": "user", "content": "test"}], "ctx", model="gpt-5")
         w.finished.connect(lambda r: results.append(r))
         w.finished.emit(response)
 
@@ -146,7 +149,7 @@ class TestAIWorker:
 
     def test_error_signal_on_failure(self):
         errors = []
-        w = AIWorker([], "ctx")
+        w = AIWorker([], "ctx", model="gpt-5")
         w.error.connect(lambda e: errors.append(e))
         w.error.emit("API error: quota exceeded")
         assert errors == ["API error: quota exceeded"]
@@ -162,10 +165,8 @@ class TestAIWorker:
             def send(self, msgs, ctx):
                 return fake_response
 
-        monkeypatch.setattr("app.workers.AIWorker._model", "gpt-4o", raising=False)
-
         with patch("core.ai_client.AIClient", FakeAIClient):
-            w = AIWorker([{"role": "user", "content": "Hi"}], "some context")
+            w = AIWorker([{"role": "user", "content": "Hi"}], "some context", model="gpt-5")
             w.finished.connect(lambda r: results.append(r))
             # Patch the import inside run
             import core.ai_client as ac

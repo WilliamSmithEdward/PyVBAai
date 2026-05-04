@@ -315,7 +315,15 @@ class MainWindow(QMainWindow):
 
         config = SettingsDialog.load_context_config()
         context = build_context(self._wb, config)
-        model = self._model_combo.currentText()
+        model = self._model_combo.currentText().strip()
+        if not model:
+            self._chat.hide_typing()
+            self._chat.set_input_enabled(True)
+            self._chat.add_message(
+                "_No model selected. Pick a model from the toolbar dropdown and try again._",
+                "system",
+            )
+            return
 
         self._ai_worker = AIWorker(self._conversation.api_messages(), context, model)
         self._ai_worker.finished.connect(self._on_ai_response)

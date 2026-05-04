@@ -214,7 +214,12 @@ Best practices:
 
 
 class AIClient:
-    def __init__(self, model: str = "gpt-4o") -> None:
+    def __init__(self, model: str) -> None:
+        if not model:
+            raise ValueError(
+                "AIClient requires a model name. Pick one from the toolbar's "
+                "Model dropdown before sending a message."
+            )
         self.model = model
         self._client = None
 

@@ -123,9 +123,11 @@ class TestParseResponse:
 # ── AIClient ──────────────────────────────────────────────────────────────────
 
 class TestAIClient:
-    def test_default_model(self):
-        c = AIClient()
-        assert c.model == "gpt-4o"
+    def test_missing_model_raises(self):
+        # AIClient no longer has a fallback default — the user must pick a
+        # model in the toolbar before sending.
+        with pytest.raises(ValueError, match="model"):
+            AIClient(model="")
 
     def test_custom_model(self):
         c = AIClient(model="gpt-4o-mini")
@@ -321,13 +323,13 @@ class TestAIClient:
 
     def test_client_not_created_without_call(self):
         """Client should be lazily initialized."""
-        c = AIClient()
+        c = AIClient(model="gpt-5")
         assert c._client is None
 
     def test_client_raises_without_api_key(self, monkeypatch):
         """Accessing .client without OPENAI_API_KEY should raise ValueError."""
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-        c = AIClient()
+        c = AIClient(model="gpt-5")
         with pytest.raises(ValueError, match="OPENAI_API_KEY"):
             _ = c.client
 

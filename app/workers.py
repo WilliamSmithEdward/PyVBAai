@@ -51,9 +51,14 @@ class AIWorker(QThread):
         self,
         conversation_messages: list[dict],
         context: str,
-        model: str = "gpt-4o",
+        model: str,
     ) -> None:
         super().__init__()
+        if not model:
+            raise ValueError(
+                "AIWorker requires a model name. Pick one from the toolbar's "
+                "Model dropdown before sending a message."
+            )
         self._messages = conversation_messages
         self._context = context
         self._model = model
