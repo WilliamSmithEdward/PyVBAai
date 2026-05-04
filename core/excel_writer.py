@@ -10,8 +10,10 @@ by the UI as copy/paste and are never passed to this module.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import tempfile
+import zipfile
 from typing import Any
 
 from app.logger import get_logger
@@ -19,9 +21,189 @@ from models.conversation import Change
 
 _log = get_logger(__name__)
 
+# Functions added after Excel 2010 that require an _xlfn. prefix in OOXML.
+# Without this prefix openpyxl-saved files show #NAME? when opened in Excel.
+_XLFN_FUNCTIONS: frozenset[str] = frozenset({
+    # Excel 365 dynamic array / spill
+    "FILTER", "UNIQUE", "SORT", "SORTBY", "SEQUENCE", "RANDARRAY",
+    # Excel 365 lookup
+    "XLOOKUP", "XMATCH",
+    # Excel 365 lambda / let
+    "LET", "LAMBDA", "MAP", "REDUCE", "SCAN", "MAKEARRAY", "BYROW", "BYCOL", "ISOMITTED",
+    # Excel 2019
+    "IFS", "SWITCH", "MAXIFS", "MINIFS", "CONCAT", "TEXTJOIN", "STOCKHISTORY",
+    # Excel 2013
+    "ACOT", "ACOTH", "ARABIC", "BASE", "BITAND", "BITLSHIFT", "BITOR", "BITRSHIFT",
+    "BITXOR", "CEILING.MATH", "COMBINA", "COT", "COTH", "CSC", "CSCH", "DAYS",
+    "DECIMAL", "ENCODEURL", "FILTERXML", "FLOOR.MATH", "FORMULATEXT", "GAMMA",
+    "GAUSS", "IFNA", "IMCOSH", "IMCOT", "IMCSC", "IMCSCH", "IMSEC", "IMSECH",
+    "IMSINH", "IMTAN", "ISFORMULA", "MUNIT", "NUMBERVALUE", "PDURATION",
+    "PERMUTATIONA", "PHI", "RRI", "SEC", "SECH", "SHEET", "SHEETS", "SKEW.P",
+    "UNICHAR", "UNICODE", "WEBSERVICE", "XOR",
+    # Excel 2010
+    "AGGREGATE", "NETWORKDAYS.INTL", "WORKDAY.INTL",
+})
+
+_XLFN_RE = re.compile(
+    r"(?<![._A-Za-z0-9])("
+    + "|".join(re.escape(fn) for fn in sorted(_XLFN_FUNCTIONS, key=len, reverse=True))
+    + r")(?=\s*\()",
+    re.IGNORECASE,
+)
+
+
+def _add_xlfn_prefix(formula: str) -> str:
+    """Rewrite formula so Excel-2013+ functions carry the required _xlfn. prefix.
+
+    openpyxl stores formulas verbatim, but the OOXML spec requires that
+    functions introduced after Excel 2010 be stored as _xlfn.FUNCNAME().
+    Without the prefix Excel shows #NAME? and prepends @ to suppress spilling.
+    Already-prefixed functions are left unchanged (lookbehind skips after '.').
+    """
+    if not formula.startswith("="):
+        return formula
+    return "=" + _XLFN_RE.sub(lambda m: f"_xlfn.{m.group(1).upper()}", formula[1:])
+
 
 class ApplyError(Exception):
     """Raised when a change operation fails."""
+
+
+# xl/workbook.xml extension that tells Excel 365 this workbook understands
+# dynamic arrays.  Without it Excel adds "@" (implicit intersection operator)
+# to every formula that can spill, because it assumes the file was saved by a
+# pre-365 application that never intended spilling behaviour.
+_DA_FEATURES_URI = "{B58B0392-4F1F-4190-BB64-5DF3571DCE5F}"
+_DA_FEATURES_EXT = (
+    f'<ext uri="{_DA_FEATURES_URI}"'
+    ' xmlns:xcalcf="http://schemas.microsoft.com/office/spreadsheetml/2018/calcfeatures">'
+    "<xcalcf:calcFeatures>"
+    '<xcalcf:feature name="microsoft.com:RD"/>'
+    '<xcalcf:feature name="microsoft.com:Single"/>'
+    '<xcalcf:feature name="microsoft.com:FV"/>'
+    '<xcalcf:feature name="microsoft.com:CNMTM"/>'
+    '<xcalcf:feature name="microsoft.com:LET_WF"/>'
+    '<xcalcf:feature name="microsoft.com:LAMBDA_WF"/>'
+    '<xcalcf:feature name="microsoft.com:ARRAYTEXT_WF"/>'
+    "</xcalcf:calcFeatures>"
+    "</ext>"
+)
+
+# xl/metadata.xml that registers the XLDAPR dynamic-array cell-metadata type.
+# Every anchor cell for a spilling formula must reference this via cm="1".
+# Excel requires this file to exist (+ content-type + relationship) before it
+# will treat formulas as dynamic arrays instead of implicit-intersection (@).
+_DA_METADATA_XML = (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    '<metadata xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+    ' xmlns:xda="http://schemas.microsoft.com/office/spreadsheetml/2017/dynamicarray">'
+    '<metadataTypes count="1">'
+    '<metadataType name="XLDAPR" minSupportedVersion="120000" copy="1" pasteAll="1"'
+    ' pasteValues="1" merge="1" splitFirst="1" rowColShift="1" clearFormats="1"'
+    ' clearComments="1" assign="1" coerce="1" cellMeta="1"/>'
+    "</metadataTypes>"
+    '<futureMetadata name="XLDAPR" count="1">'
+    "<bk><extLst>"
+    '<ext uri="{bdbb8cdc-fa1e-496e-a857-3c3f30c029c3}">'
+    '<xda:dynamicArrayProperties fDynamic="1" fCollapsed="0"/>'
+    "</ext></extLst></bk>"
+    "</futureMetadata>"
+    '<cellMetadata count="1"><bk><rc t="1" v="0"/></bk></cellMetadata>'
+    "</metadata>"
+)
+_DA_CONTENT_TYPE = (
+    '<Override PartName="/xl/metadata.xml"'
+    ' ContentType="application/vnd.openxmlformats-officedocument'
+    '.spreadsheetml.sheetMetadata+xml"/>'
+)
+_DA_REL_TYPE = (
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/sheetMetadata"
+)
+
+# Matches a <c> tag (without cm=) that is directly followed by an <f> tag
+# (without t=) containing a dynamic-array function so we can stamp:
+#   - cm="1" on the <c> element (XLDAPR cell-metadata reference)
+#   - t="array" ref="<anchor>" on the <f> element
+# The ref attribute is required by Excel; we set it to the single anchor cell
+# and rely on fullCalcOnLoad="1" to make Excel resize the spill range on open.
+_DA_CELL_RE = re.compile(
+    r'(<c\b(?![^>]*\bcm=)[^>]*\br="([A-Z]+\d+)"[^>]*>)'
+    r"(<f\b(?![^>]*\bt=)[^>]*>)"
+    r"(_xlfn\.(?:FILTER|UNIQUE|SORT(?:BY)?|SEQUENCE|RANDARRAY"
+    r"|XLOOKUP|XMATCH|LET|LAMBDA|MAP|REDUCE|SCAN|MAKEARRAY|BYROW|BYCOL))",
+    re.IGNORECASE,
+)
+
+
+def _da_cell_sub(m: re.Match) -> str:  # type: ignore[type-arg]
+    c_open = m.group(1)[:-1]   # strip trailing >
+    anchor = m.group(2)
+    f_open = m.group(3)[:-1]   # strip trailing >
+    return f'{c_open} cm="1">{f_open} t="array" ref="{anchor}">{m.group(4)}'
+
+
+def _postprocess_xlsx(xlsx_path: str) -> None:
+    """Single-pass zip fixup applied after every openpyxl save.
+
+    1. Remove xl/calcChain.xml -- stale chain causes "Removed Records: Formula"
+       repair dialogs; Excel regenerates it on next open.
+    2. Inject xcalcf:calcFeatures into xl/workbook.xml so Excel 365 marks the
+       workbook as dynamic-array aware.
+    3. Add xl/metadata.xml (XLDAPR) + its content-type + relationship so Excel
+       recognises per-cell dynamic-array intent.
+    4. Add cm="1" / t="array" to anchor <c>/<f> elements for spilling functions
+       so Excel does not prepend the @ implicit-intersection operator.
+    """
+    tmp = xlsx_path + ".tmp"
+    with zipfile.ZipFile(xlsx_path, "r") as zin, \
+         zipfile.ZipFile(tmp, "w", compression=zipfile.ZIP_DEFLATED) as zout:
+        names = set(zin.namelist())
+        need_metadata = "xl/metadata.xml" not in names
+
+        for name in names:
+            if name == "xl/calcChain.xml":
+                continue
+            data = zin.read(name)
+            text = data.decode("utf-8")
+
+            if name == "xl/workbook.xml":
+                if _DA_FEATURES_URI not in text:
+                    if "</extLst>" in text:
+                        text = text.replace("</extLst>", _DA_FEATURES_EXT + "</extLst>", 1)
+                    else:
+                        text = text.replace(
+                            "</workbook>",
+                            "<extLst>" + _DA_FEATURES_EXT + "</extLst></workbook>",
+                            1,
+                        )
+                data = text.encode("utf-8")
+
+            elif name == "[Content_Types].xml" and need_metadata:
+                if "/xl/metadata.xml" not in text:
+                    text = text.replace("</Types>", _DA_CONTENT_TYPE + "</Types>", 1)
+                data = text.encode("utf-8")
+
+            elif name == "xl/_rels/workbook.xml.rels" and need_metadata:
+                if _DA_REL_TYPE not in text:
+                    existing = [int(n) for n in re.findall(r'Id="rId(\d+)"', text)]
+                    next_id = max(existing, default=0) + 1
+                    new_rel = (
+                        f'<Relationship Id="rId{next_id}" Type="{_DA_REL_TYPE}"'
+                        ' Target="metadata.xml"/>'
+                    )
+                    text = text.replace("</Relationships>", new_rel + "</Relationships>", 1)
+                data = text.encode("utf-8")
+
+            elif name.startswith("xl/worksheets/sheet") and name.endswith(".xml"):
+                text = _DA_CELL_RE.sub(_da_cell_sub, text)
+                data = text.encode("utf-8")
+
+            zout.writestr(name, data)
+
+        if need_metadata:
+            zout.writestr("xl/metadata.xml", _DA_METADATA_XML)
+
+    os.replace(tmp, xlsx_path)
 
 
 def apply_changes(file_path: str, changes: list[Change]) -> str:
@@ -59,10 +241,17 @@ def apply_changes(file_path: str, changes: list[Change]) -> str:
         for change in changes:
             _dispatch_openpyxl(owb, change)
 
+        # Force full recalculation on open so dynamic array formulas
+        # (FILTER, XLOOKUP, UNIQUE, SORT, etc.) spill without requiring F2+Enter.
+        owb.calculation.fullCalcOnLoad = True
+
         tmp_dir = tempfile.mkdtemp()
         try:
             tmp_path = os.path.join(tmp_dir, os.path.basename(saved_path))
             owb.save(tmp_path)
+            # Remove stale calcChain.xml and mark dynamic-array formulas so
+            # Excel 365 spills them without prepending the @ operator.
+            _postprocess_xlsx(tmp_path)
             shutil.move(tmp_path, saved_path)
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -191,7 +380,7 @@ def _set_cell(owb: Any, p: dict) -> None:
     ws = _get_openpyxl_sheet(owb, p["sheet"])
     cell = ws[p["cell"]]
     if "formula" in p:
-        cell.value = p["formula"]
+        cell.value = _add_xlfn_prefix(p["formula"])
     else:
         cell.value = p["value"]
     # Apply any inline format keys

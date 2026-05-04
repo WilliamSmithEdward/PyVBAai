@@ -11,9 +11,11 @@ import openpyxl
 import pytest
 
 from core.excel_writer import (
+    _DA_FEATURES_URI,
     ApplyError,
     _add_named_range,
     _add_sheet,
+    _add_xlfn_prefix,
     _clear_range,
     _copy_sheet,
     _create_chart,
@@ -299,6 +301,178 @@ def _make_chart_data_wb():
     ws.append(["Feb", 120, 90])
     ws.append(["Mar", 140, 95])
     return wb
+
+
+class TestAddXlfnPrefix:
+    def test_xlookup_prefixed(self):
+        assert _add_xlfn_prefix('=XLOOKUP(A1,B:B,C:C,"")') == '=_xlfn.XLOOKUP(A1,B:B,C:C,"")'
+
+    def test_filter_prefixed(self):
+        assert _add_xlfn_prefix("=FILTER(A2:C8,B2:B8>0)") == "=_xlfn.FILTER(A2:C8,B2:B8>0)"
+
+    def test_unique_sort_sequence_prefixed(self):
+        assert _add_xlfn_prefix("=UNIQUE(A1:A10)") == "=_xlfn.UNIQUE(A1:A10)"
+        assert _add_xlfn_prefix("=SORT(A1:A10)") == "=_xlfn.SORT(A1:A10)"
+        assert _add_xlfn_prefix("=SEQUENCE(10)") == "=_xlfn.SEQUENCE(10)"
+
+    def test_already_prefixed_unchanged(self):
+        assert _add_xlfn_prefix("=_xlfn.XLOOKUP(A1,B:B,C:C)") == "=_xlfn.XLOOKUP(A1,B:B,C:C)"
+
+    def test_nested_function(self):
+        result = _add_xlfn_prefix('=IFERROR(XLOOKUP(A1,B:B,C:C,""),0)')
+        assert result == '=IFERROR(_xlfn.XLOOKUP(A1,B:B,C:C,""),0)'
+
+    def test_normal_function_unchanged(self):
+        assert _add_xlfn_prefix("=SUM(A1:A10)") == "=SUM(A1:A10)"
+        assert _add_xlfn_prefix("=VLOOKUP(A1,B:C,2,0)") == "=VLOOKUP(A1,B:C,2,0)"
+
+    def test_non_formula_unchanged(self):
+        assert _add_xlfn_prefix("hello") == "hello"
+        assert _add_xlfn_prefix("") == ""
+
+    def test_case_insensitive(self):
+        assert _add_xlfn_prefix("=xlookup(A1,B:B,C:C)") == "=_xlfn.XLOOKUP(A1,B:B,C:C)"
+
+    def test_set_cell_applies_prefix(self, owb):
+        _set_cell(owb, {"sheet": "Sheet1", "cell": "A1", "formula": "=XLOOKUP(1,B:B,C:C)"})
+        assert owb["Sheet1"]["A1"].value == "=_xlfn.XLOOKUP(1,B:B,C:C)"
+
+
+class TestDaFeaturesInjection:
+    """_postprocess_xlsx produces a fully dynamic-array-aware xlsx."""
+
+    def _make_zip(self, tmp_path, sheets=None, has_metadata=False):
+        import zipfile as zf
+        xlsx = tmp_path / "wb.xlsx"
+        cts = (
+            '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+            '<Override PartName="/xl/workbook.xml"'
+            ' ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+            "</Types>"
+        )
+        rels = (
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'
+            "</Relationships>"
+        )
+        wb_xml = "<workbook></workbook>"
+        with zf.ZipFile(xlsx, "w") as z:
+            z.writestr("[Content_Types].xml", cts)
+            z.writestr("xl/workbook.xml", wb_xml)
+            z.writestr("xl/_rels/workbook.xml.rels", rels)
+            for name, content in (sheets or {}).items():
+                z.writestr(f"xl/worksheets/{name}", content)
+            if has_metadata:
+                z.writestr("xl/metadata.xml", "<metadata/>")
+        return xlsx
+
+    def _run(self, xlsx):
+        from core.excel_writer import _postprocess_xlsx
+        _postprocess_xlsx(str(xlsx))
+        import zipfile as zf
+        with zf.ZipFile(xlsx) as z:
+            return {n: z.read(n).decode() for n in z.namelist()}
+
+    def test_features_uri_injected_no_extlst(self, tmp_path):
+        xlsx = self._make_zip(tmp_path)
+        data = self._run(xlsx)
+        assert _DA_FEATURES_URI in data["xl/workbook.xml"]
+        assert "xcalcf:feature" in data["xl/workbook.xml"]
+
+    def test_features_uri_injected_existing_extlst(self, tmp_path):
+        import zipfile as zf
+        xlsx = tmp_path / "wb.xlsx"
+        xml = '<workbook><extLst><ext uri="{OTHER}"/></extLst></workbook>'
+        with zf.ZipFile(xlsx, "w") as z:
+            z.writestr("xl/workbook.xml", xml)
+            z.writestr("[Content_Types].xml", "<Types></Types>")
+            z.writestr("xl/_rels/workbook.xml.rels", "<Relationships></Relationships>")
+        data = self._run(xlsx)
+        assert "{OTHER}" in data["xl/workbook.xml"]
+        assert _DA_FEATURES_URI in data["xl/workbook.xml"]
+
+    def test_not_duplicated_if_already_present(self, tmp_path):
+        import zipfile as zf
+        xlsx = tmp_path / "wb.xlsx"
+        uri = _DA_FEATURES_URI
+        xml = f'<workbook><extLst><ext uri="{uri}"/></extLst></workbook>'
+        with zf.ZipFile(xlsx, "w") as z:
+            z.writestr("xl/workbook.xml", xml)
+            z.writestr("[Content_Types].xml", "<Types></Types>")
+            z.writestr("xl/_rels/workbook.xml.rels", "<Relationships></Relationships>")
+        data = self._run(xlsx)
+        assert data["xl/workbook.xml"].count(uri) == 1
+
+    def test_calc_chain_removed(self, tmp_path):
+        import zipfile as zf
+        xlsx = tmp_path / "wb.xlsx"
+        with zf.ZipFile(xlsx, "w") as z:
+            z.writestr("xl/workbook.xml", "<workbook></workbook>")
+            z.writestr("[Content_Types].xml", "<Types></Types>")
+            z.writestr("xl/_rels/workbook.xml.rels", "<Relationships></Relationships>")
+            z.writestr("xl/calcChain.xml", "<calcChain/>")
+        data = self._run(xlsx)
+        assert "xl/calcChain.xml" not in data
+
+    def test_metadata_xml_added(self, tmp_path):
+        xlsx = self._make_zip(tmp_path)
+        data = self._run(xlsx)
+        assert "xl/metadata.xml" in data
+        assert "XLDAPR" in data["xl/metadata.xml"]
+        assert "dynamicArrayProperties" in data["xl/metadata.xml"]
+
+    def test_metadata_content_type_added(self, tmp_path):
+        xlsx = self._make_zip(tmp_path)
+        data = self._run(xlsx)
+        assert "sheetMetadata" in data["[Content_Types].xml"]
+
+    def test_metadata_relationship_added(self, tmp_path):
+        xlsx = self._make_zip(tmp_path)
+        data = self._run(xlsx)
+        assert "sheetMetadata" in data["xl/_rels/workbook.xml.rels"]
+
+    def test_metadata_not_duplicated(self, tmp_path):
+        xlsx = self._make_zip(tmp_path, has_metadata=True)
+        data = self._run(xlsx)
+        # Already had metadata.xml -- should not duplicate
+        assert data["xl/metadata.xml"] == "<metadata/>"
+
+    def test_da_cell_cm_and_t_array_added(self, tmp_path):
+        sheet = (
+            '<worksheet><sheetData>'
+            '<row r="1"><c r="A1"><f>_xlfn.UNIQUE(B2:B8)</f><v/></c></row>'
+            '</sheetData></worksheet>'
+        )
+        xlsx = self._make_zip(tmp_path, sheets={"sheet1.xml": sheet})
+        data = self._run(xlsx)
+        ws = data["xl/worksheets/sheet1.xml"]
+        assert 'cm="1"' in ws
+        assert 't="array"' in ws
+        assert 'ref="A1"' in ws
+
+    def test_plain_formula_not_modified(self, tmp_path):
+        sheet = (
+            '<worksheet><sheetData>'
+            '<row r="1"><c r="A1"><f>SUM(B2:B8)</f><v/></c></row>'
+            '</sheetData></worksheet>'
+        )
+        xlsx = self._make_zip(tmp_path, sheets={"sheet1.xml": sheet})
+        data = self._run(xlsx)
+        ws = data["xl/worksheets/sheet1.xml"]
+        assert 'cm="1"' not in ws
+        assert 't="array"' not in ws
+
+    def test_already_marked_not_duplicated(self, tmp_path):
+        sheet = (
+            '<worksheet><sheetData>'
+            '<row r="1"><c r="A1" cm="1"><f t="array" ref="A1">_xlfn.UNIQUE(B2:B8)</f><v/></c></row>'
+            '</sheetData></worksheet>'
+        )
+        xlsx = self._make_zip(tmp_path, sheets={"sheet1.xml": sheet})
+        data = self._run(xlsx)
+        ws = data["xl/worksheets/sheet1.xml"]
+        assert ws.count('cm="1"') == 1
+        assert ws.count('t="array"') == 1
 
 
 class TestCreateChart:
