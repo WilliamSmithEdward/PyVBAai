@@ -524,6 +524,7 @@ def _clear_format(owb: Any, p: dict) -> None:
     ws = _get_openpyxl_sheet(owb, p["sheet"])
     try:
         min_col, min_row, max_col, max_row = openpyxl.utils.range_boundaries(p["range"])
+        assert min_col is not None and min_row is not None and max_col is not None and max_row is not None
         cells = [ws.cell(row=r, column=c)
                  for r in range(min_row, max_row + 1)
                  for c in range(min_col, max_col + 1)]
@@ -646,7 +647,7 @@ def _create_chart(owb: Any, p: dict) -> None:
         ref_ws = _get_openpyxl_sheet(owb, ref_sheet_name.strip("'\""))
 
     min_col, min_row, max_col, max_row = openpyxl.utils.range_boundaries(data_range)
-    if min_col is None or min_row is None:
+    if min_col is None or min_row is None or max_col is None or max_row is None:
         raise ApplyError(f"Invalid data_range '{p['data_range']}'.")
     if max_col <= min_col:
         raise ApplyError(
@@ -655,14 +656,12 @@ def _create_chart(owb: Any, p: dict) -> None:
         )
 
     if chart_type == "scatter":
-        from openpyxl.chart import Series
-        # x values start after header row; y values include the header row so
-        # title_from_data=True can pick up the series label from row min_row.
-        x_ref = Reference(ref_ws, min_col=min_col, min_row=min_row + 1, max_row=max_row)
-        for col_idx in range(min_col + 1, max_col + 1):
-            y_ref = Reference(ref_ws, min_col=col_idx, min_row=min_row, max_row=max_row)
-            ser = Series(y_ref, x_ref, title_from_data=True)
-            chart.series.append(ser)
+        data_ref = Reference(
+            ref_ws, min_col=min_col + 1, min_row=min_row, max_col=max_col, max_row=max_row
+        )
+        chart.add_data(data_ref, titles_from_data=True)
+        cats_ref = Reference(ref_ws, min_col=min_col, min_row=min_row + 1, max_row=max_row)
+        chart.set_categories(cats_ref)
     else:
         # data = columns 2..N with header row; categories = column 1 data rows
         data_ref = Reference(
@@ -689,10 +688,10 @@ def _delete_chart(owb: Any, p: dict) -> None:
     removed = 0
     for chart in charts:
         ct = getattr(chart, "title", None)
-        chart_title = str(ct) if isinstance(ct, str) else ""
+        chart_title = ct if isinstance(ct, str) else ""
         if not chart_title and ct is not None:
             try:
-                chart_title = str(ct.tx.rich.p[0].r[0].t)
+                chart_title = str(ct.tx.rich.p[0].r[0].t)  # type: ignore[union-attr]
             except (AttributeError, IndexError, TypeError):
                 pass
         if title and chart_title == title:
