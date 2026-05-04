@@ -3,12 +3,9 @@
 # of this file, via any medium, is strictly prohibited. See LICENSE for details.
 """Tests for core/excel_writer.py.
 
-Non-VBA handlers use real openpyxl workbooks created in-memory.
-VBA-COM handlers use MagicMock to avoid requiring Excel.
+All handlers use real openpyxl workbooks created in-memory.
 """
 from __future__ import annotations
-
-from unittest.mock import MagicMock
 
 import openpyxl
 import pytest
@@ -18,10 +15,6 @@ from core.excel_writer import (
     _add_named_range,
     _add_sheet,
     _clear_range,
-    _com_add_vba_module,
-    _com_delete_vba_module,
-    _com_get_vba_component,
-    _com_set_vba,
     _copy_sheet,
     _delete_named_range,
     _delete_sheet,
@@ -50,11 +43,6 @@ def owb():
     return wb
 
 
-@pytest.fixture()
-def com_wb():
-    """A MagicMock representing an Excel Workbook COM object (VBA tests only)."""
-    return MagicMock(name="ComWorkbook")
-
 
 # ── _get_openpyxl_sheet ───────────────────────────────────────────────────────
 
@@ -66,26 +54,6 @@ class TestGetOpenpyxlSheet:
     def test_raises_apply_error_on_missing(self, owb):
         with pytest.raises(ApplyError, match="Sheet not found"):
             _get_openpyxl_sheet(owb, "Ghost")
-
-
-# ── _com_get_vba_component ────────────────────────────────────────────────────
-
-class TestComGetVbaComponent:
-    def test_returns_component(self, com_wb):
-        fake_comp = MagicMock()
-        com_wb.VBProject.VBComponents.return_value = fake_comp
-        result = _com_get_vba_component(com_wb, "Module1")
-        assert result is fake_comp
-
-    def test_raises_apply_error_on_failure(self, com_wb):
-        com_wb.VBProject.VBComponents.side_effect = Exception("access denied")
-        with pytest.raises(ApplyError, match="VBA module 'Missing' not found"):
-            _com_get_vba_component(com_wb, "Missing")
-
-    def test_error_includes_trust_hint(self, com_wb):
-        com_wb.VBProject.VBComponents.side_effect = Exception("x")
-        with pytest.raises(ApplyError, match="Trust access"):
-            _com_get_vba_component(com_wb, "X")
 
 
 # ── _set_cell ─────────────────────────────────────────────────────────────────
@@ -234,81 +202,6 @@ class TestNamedRange:
     def test_delete_missing_raises(self, owb):
         with pytest.raises(ApplyError, match="Named range 'Ghost' not found"):
             _delete_named_range(owb, {"name": "Ghost"})
-
-
-# ── _com_set_vba ──────────────────────────────────────────────────────────────
-
-class TestComSetVba:
-    def test_replaces_existing_code(self, com_wb):
-        comp = MagicMock()
-        code_module = MagicMock()
-        code_module.CountOfLines = 5
-        comp.CodeModule = code_module
-        com_wb.VBProject.VBComponents.return_value = comp
-
-        _com_set_vba(com_wb, {"module": "Module1", "code": "Sub New()\nEnd Sub"})
-        code_module.DeleteLines.assert_called_once_with(1, 5)
-        code_module.InsertLines.assert_called_once_with(1, "Sub New()\nEnd Sub")
-
-    def test_empty_module_no_delete(self, com_wb):
-        comp = MagicMock()
-        code_module = MagicMock()
-        code_module.CountOfLines = 0
-        comp.CodeModule = code_module
-        com_wb.VBProject.VBComponents.return_value = comp
-
-        _com_set_vba(com_wb, {"module": "Module1", "code": "Sub X()\nEnd Sub"})
-        code_module.DeleteLines.assert_not_called()
-        code_module.InsertLines.assert_called_once()
-
-    def test_empty_code_no_insert(self, com_wb):
-        comp = MagicMock()
-        code_module = MagicMock()
-        code_module.CountOfLines = 3
-        comp.CodeModule = code_module
-        com_wb.VBProject.VBComponents.return_value = comp
-
-        _com_set_vba(com_wb, {"module": "Module1", "code": ""})
-        code_module.DeleteLines.assert_called_once()
-        code_module.InsertLines.assert_not_called()
-
-
-# ── _com_add_vba_module ───────────────────────────────────────────────────────
-
-class TestComAddVbaModule:
-    def test_adds_and_names_module(self, com_wb):
-        new_comp = MagicMock()
-        com_wb.VBProject.VBComponents.Add.return_value = new_comp
-        _com_add_vba_module(com_wb, {"name": "NewMod", "code": "Sub Test()\nEnd Sub"})
-        com_wb.VBProject.VBComponents.Add.assert_called_once_with(1)
-        assert new_comp.Name == "NewMod"
-        new_comp.CodeModule.InsertLines.assert_called_once_with(1, "Sub Test()\nEnd Sub")
-
-    def test_no_insert_when_no_code(self, com_wb):
-        new_comp = MagicMock()
-        com_wb.VBProject.VBComponents.Add.return_value = new_comp
-        _com_add_vba_module(com_wb, {"name": "Empty", "code": ""})
-        new_comp.CodeModule.InsertLines.assert_not_called()
-
-    def test_raises_apply_error_on_com_failure(self, com_wb):
-        com_wb.VBProject.VBComponents.Add.side_effect = Exception("Trust Center blocked")
-        with pytest.raises(ApplyError, match="Cannot add VBA module"):
-            _com_add_vba_module(com_wb, {"name": "X", "code": ""})
-
-
-# ── _com_delete_vba_module ────────────────────────────────────────────────────
-
-class TestComDeleteVbaModule:
-    def test_removes_component(self, com_wb):
-        comp = MagicMock()
-        com_wb.VBProject.VBComponents.return_value = comp
-        _com_delete_vba_module(com_wb, {"name": "Module1"})
-        com_wb.VBProject.VBComponents.Remove.assert_called_once_with(comp)
-
-    def test_raises_when_not_found(self, com_wb):
-        com_wb.VBProject.VBComponents.side_effect = Exception("not found")
-        with pytest.raises(ApplyError):
-            _com_delete_vba_module(com_wb, {"name": "Ghost"})
 
 
 # ── _dispatch_openpyxl ────────────────────────────────────────────────────────

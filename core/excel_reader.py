@@ -5,9 +5,6 @@
 
 Cell values, formulas and formatting are read directly from the xlsx/xlsm XML via
 openpyxl -- no Excel process required.
-
-VBA source code cannot be read from the binary OLE blob without COM, so that path
-still uses win32com but is only invoked for .xlsm/.xlam files.
 """
 from __future__ import annotations
 
@@ -15,15 +12,17 @@ import os
 from functools import lru_cache
 from typing import Any
 
+from app.logger import get_logger
 from models.workbook import (
     CellData,
     CellFormat,
     ContextConfig,
     NamedRange,
     SheetData,
-    VBAModule,
     WorkbookData,
 )
+
+_log = get_logger(__name__)
 
 # Maximum columns we ever read per sheet (sanity limit)
 _MAX_COLS_HARD = 200
@@ -184,14 +183,14 @@ def _cell_format(cell: Any) -> CellFormat | None:
 def read_workbook(file_path: str, config: ContextConfig | None = None) -> WorkbookData:
     """
     Extract workbook data using openpyxl for cell data and formatting.
-    VBA source code is read via COM only for .xlsm/.xlam files.
-    No Excel process is launched for plain .xlsx files.
+    No Excel process is launched.
     """
     import openpyxl
 
     if config is None:
         config = ContextConfig()
 
+    _log.debug("read_workbook: %s  config=%s", file_path, config)
     name = os.path.basename(file_path)
     wb_data = WorkbookData(file_path=file_path, name=name)
     try:
@@ -283,87 +282,8 @@ def read_workbook(file_path: str, config: ContextConfig | None = None) -> Workbo
         finally:
             owb.close()
 
-        # -- VBA source code -- COM path (xlsm/xlam only) ---------------------
-        ext = os.path.splitext(file_path)[1].lower()
-        if config.include_vba and ext in (".xlsm", ".xlam"):
-            _read_vba_via_com(file_path, wb_data, config)
-
     except Exception as exc:
         wb_data.extraction_error = str(exc)
 
     return wb_data
 
-
-def _read_vba_via_com(
-    file_path: str, wb_data: WorkbookData, config: ContextConfig
-) -> None:
-    """Populate wb_data.vba_modules using COM. Called only for .xlsm/.xlam files."""
-    try:
-        import pythoncom
-        import win32com.client as win32
-    except ImportError:
-        wb_data.extraction_error = "pywin32 is required to read VBA from .xlsm files."
-        return
-
-    pythoncom.CoInitialize()
-    excel = None
-    com_wb = None
-    try:
-        excel = win32.DispatchEx("Excel.Application")
-        excel.Visible = False
-        excel.DisplayAlerts = False
-        excel.ScreenUpdating = False
-        excel.EnableEvents = False
-        excel.AskToUpdateLinks = False
-        excel.AutomationSecurity = 3  # msoAutomationSecurityForceDisable
-        try:
-            excel.Calculation = -4135
-        except Exception:  # noqa: BLE001
-            pass
-
-        com_wb = excel.Workbooks.Open(
-            file_path, UpdateLinks=False, ReadOnly=True,
-            IgnoreReadOnlyRecommended=True,
-        )
-
-        type_map = {1: "Module", 2: "Class", 3: "Form", 100: "Document"}
-        for comp in com_wb.VBProject.VBComponents:
-            try:
-                mname = comp.Name
-                if (
-                    config.included_vba_modules is not None
-                    and mname not in config.included_vba_modules
-                ):
-                    continue
-                if mname in config.excluded_vba_modules:
-                    continue
-                lines = comp.CodeModule.CountOfLines
-                code = comp.CodeModule.Lines(1, lines) if lines > 0 else ""
-                wb_data.vba_modules.append(VBAModule(
-                    name=mname,
-                    module_type=comp.Type,
-                    type_name=type_map.get(comp.Type, "Unknown"),
-                    code=code,
-                ))
-                wb_data.has_vba = True
-            except Exception:  # noqa: BLE001
-                pass
-
-    except Exception as exc:
-        wb_data.extraction_error = (
-            f"VBA extraction failed: {exc}. "
-            "Enable 'Trust access to the VBA project object model' in "
-            "Excel > Trust Center > Macro Settings."
-        )
-    finally:
-        try:
-            if com_wb is not None:
-                com_wb.Close(SaveChanges=False)
-        except Exception:  # noqa: BLE001
-            pass
-        try:
-            if excel is not None:
-                excel.Quit()
-        except Exception:  # noqa: BLE001
-            pass
-        pythoncom.CoUninitialize()

@@ -25,6 +25,7 @@ from app.chat_widget import ChatWidget
 from app.preview_dialog import PreviewDialog
 from app.settings_dialog import SettingsDialog
 from app.theme import apply_theme
+from app.vba_dialog import VBADialog
 from app.workbook_panel import VBAViewerDialog, WorkbookPanel
 from app.workers import AIWorker, ExcelReaderWorker, ExcelWriterWorker, NewWorkbookWorker
 from core.context_builder import build_context, estimate_tokens
@@ -57,6 +58,7 @@ class MainWindow(QMainWindow):
         self._writer_worker: ExcelWriterWorker | None = None
         self._new_wb_worker: NewWorkbookWorker | None = None
         self._pending_response: AIResponse | None = None
+        self._pending_vba_changes: list = []
         self._pending_user_message: str | None = None  # queued while stale reload runs
         self._dark_mode: bool = SettingsDialog.load_dark_mode()
 
@@ -89,6 +91,13 @@ class MainWindow(QMainWindow):
         new_wb_btn = QPushButton("New Workbook")
         new_wb_btn.clicked.connect(self._new_workbook_dialog)
         toolbar.addWidget(new_wb_btn)
+
+        self._open_in_excel_btn = QPushButton("Open in Excel")
+        self._open_in_excel_btn.setObjectName("secondaryBtn")
+        self._open_in_excel_btn.setToolTip("Open the current file in Excel (or system default)")
+        self._open_in_excel_btn.setEnabled(False)
+        self._open_in_excel_btn.clicked.connect(self._open_in_excel)
+        toolbar.addWidget(self._open_in_excel_btn)
 
         toolbar.addSeparator()
 
@@ -200,6 +209,14 @@ class MainWindow(QMainWindow):
         self._new_wb_worker.finished.connect(self._on_new_workbook_created)
         self._new_wb_worker.error.connect(self._on_new_workbook_error)
         self._new_wb_worker.start()
+
+    def _open_in_excel(self) -> None:
+        """Open the current workbook in the system default application (Excel)."""
+        if not self._wb or not self._wb.file_path:
+            return
+        path = os.path.normpath(self._wb.file_path)
+        if os.path.isfile(path):
+            os.startfile(path)  # noqa: S606  # Windows only; intentional
 
     def _on_new_workbook_created(self, path: str) -> None:
         self.load_file(path)
@@ -337,17 +354,27 @@ class MainWindow(QMainWindow):
         if not self._pending_response or not self._wb:
             return
 
-        changes = self._pending_response.changes
+        _VBA_OPS = {"set_vba", "add_vba_module", "delete_vba_module"}
+        all_changes = self._pending_response.changes
+        vba_changes = [c for c in all_changes if c.type in _VBA_OPS]
+        other_changes = [c for c in all_changes if c.type not in _VBA_OPS]
+
+        self._pending_vba_changes = vba_changes
         path = self._wb.file_path
         max_backups = SettingsDialog.load_max_backups()
 
-        self._chat.add_message("_Applying changes and creating backup..._", "system")
-        self._chat.set_input_enabled(False)
-
-        self._writer_worker = ExcelWriterWorker(path, changes, max_backups)
-        self._writer_worker.finished.connect(self._on_write_done)
-        self._writer_worker.error.connect(self._on_write_error)
-        self._writer_worker.start()
+        if other_changes:
+            self._chat.add_message("_Applying changes and creating backup..._", "system")
+            self._chat.set_input_enabled(False)
+            self._writer_worker = ExcelWriterWorker(path, other_changes, max_backups)
+            self._writer_worker.finished.connect(self._on_write_done)
+            self._writer_worker.error.connect(self._on_write_error)
+            self._writer_worker.start()
+        else:
+            # Only VBA changes — no file write needed
+            self._pending_response = None
+            if vba_changes:
+                self._show_vba_dialog(vba_changes)
 
     def _on_apply_declined(self) -> None:
         self._chat.add_message("_Changes declined._", "system")
@@ -366,9 +393,21 @@ class MainWindow(QMainWindow):
             "system",
         )
         self._pending_response = None
-        # Re-read to update context (saved_path may differ if .xlsx was promoted to .xlsm)
         if self._wb:
             self.load_file(saved_path)
+        # Show VBA dialog after non-VBA changes are written
+        pending_vba = getattr(self, "_pending_vba_changes", [])
+        if pending_vba:
+            self._pending_vba_changes = []
+            self._show_vba_dialog(pending_vba)
+
+    def _show_vba_dialog(self, vba_changes: list) -> None:
+        self._chat.add_message(
+            "_VBA code generated. Open the dialog to copy and paste into Excel (Alt+F11)._",
+            "system",
+        )
+        dlg = VBADialog(vba_changes, self)
+        dlg.exec()
 
     def _on_write_error(self, err: str) -> None:
         self._chat.set_input_enabled(True)
@@ -422,9 +461,11 @@ class MainWindow(QMainWindow):
             config = SettingsDialog.load_context_config()
             tokens = estimate_tokens(build_context(self._wb, config))
             self._status_token_lbl.setText(f"~{tokens:,} ctx tokens  |  {self._model_combo.currentText()}  ")
+            self._open_in_excel_btn.setEnabled(bool(self._wb.file_path and os.path.isfile(self._wb.file_path)))
         else:
             self._status_file_lbl.setText("  No file loaded")
             self._status_token_lbl.setText("")
+            self._open_in_excel_btn.setEnabled(False)
 
     # ── VBA Viewer ─────────────────────────────────────────────────────────────
 

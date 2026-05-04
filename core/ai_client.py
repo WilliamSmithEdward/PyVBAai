@@ -13,7 +13,10 @@ import json
 import os
 from typing import Any, cast
 
+from app.logger import get_logger
 from models.conversation import AIResponse, Change
+
+_log = get_logger(__name__)
 
 # Cache for model list fetched from the API (populated on first call)
 _cached_models: list[str] | None = None
@@ -82,6 +85,8 @@ border values: "<style>" or "<style>:<RRGGBB>"  (e.g. "thin", "medium:FF0000")
 {"type":"unmerge_cells", "sheet":"Name", "range":"A1:D1"}
 
 ### VBA
+VBA changes are shown to the user as copy/paste instructions (they are not written automatically).
+Always generate the full, complete VBA code — never truncate or omit lines.
 {"type":"set_vba",           "module":"ModuleName", "code":"Sub Foo()\\n  ...\\nEnd Sub"}
 {"type":"add_vba_module",    "name":"NewModule",    "code":"..."}
 {"type":"delete_vba_module", "name":"ModuleName"}
@@ -175,6 +180,10 @@ class AIClient:
 
         from openai.types.chat import ChatCompletionMessageParam
 
+        _log.debug(
+            "send: model=%s  conversation_turns=%d  context_chars=%d",
+            self.model, len(conversation_messages), len(context),
+        )
         response = self.client.chat.completions.create(
             model=self.model,
             messages=cast(list[ChatCompletionMessageParam], full_messages),
@@ -183,6 +192,7 @@ class AIClient:
         )
 
         raw_json = response.choices[0].message.content or "{}"
+        _log.debug("send: raw response (first 500 chars): %s", raw_json[:500])
         return _parse_response(raw_json)
 
     @staticmethod

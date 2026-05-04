@@ -278,6 +278,10 @@ def main() -> None:
     app.setOrganizationName("PyVBAai")
     app.setOrganizationDomain("pyvbaai.local")
 
+    # Initialise debug logging early so all subsequent code can log
+    from app.logger import init_logging
+    init_logging()
+
     # Apply theme before any widgets are constructed
     from app.settings_dialog import SettingsDialog
     from app.theme import apply_theme

@@ -3,11 +3,9 @@
 # of this file, via any medium, is strictly prohibited. See LICENSE for details.
 """Apply AI-generated changes to an Excel workbook.
 
-Non-VBA operations (cell writes, sheet structure, named ranges, formatting) use
-openpyxl directly -- no Excel process needed.
-
-VBA operations (set_vba, add_vba_module, delete_vba_module) require COM because
-VBA is stored as a binary OLE blob that openpyxl cannot modify.
+All operations use openpyxl directly -- no Excel process needed.
+VBA operations (set_vba, add_vba_module, delete_vba_module) are handled
+by the UI as copy/paste and are never passed to this module.
 """
 from __future__ import annotations
 
@@ -16,9 +14,10 @@ import shutil
 import tempfile
 from typing import Any
 
+from app.logger import get_logger
 from models.conversation import Change
 
-_VBA_OPS = {"set_vba", "add_vba_module", "delete_vba_module"}
+_log = get_logger(__name__)
 
 
 class ApplyError(Exception):
@@ -47,52 +46,23 @@ def apply_changes(file_path: str, changes: list[Change]) -> str:
     except OSError as exc:
         raise ApplyError(f"Cannot access '{os.path.basename(file_path)}': {exc}") from exc
 
-    vba_changes = [c for c in changes if c.type in _VBA_OPS]
-    other_changes = [c for c in changes if c.type not in _VBA_OPS]
-    has_vba_changes = bool(vba_changes)
-    is_xlsx = file_path.lower().endswith(".xlsx")
+    # ── Apply all changes via openpyxl ────────────────────────────────────────
+    import openpyxl
+    saved_path = os.path.abspath(file_path)
+    owb = openpyxl.load_workbook(file_path, keep_vba=True, keep_links=False)
+    try:
+        for change in changes:
+            _dispatch_openpyxl(owb, change)
 
-    # Determine final saved path (promote .xlsx -> .xlsm when VBA is added)
-    if has_vba_changes and is_xlsx:
-        saved_path = os.path.abspath(file_path[:-5] + ".xlsm")
-    else:
-        saved_path = os.path.abspath(file_path)
-
-    # ── Step 1: openpyxl for all non-VBA changes ─────────────────────────────
-    if other_changes or has_vba_changes:
-        import openpyxl
-        owb = openpyxl.load_workbook(file_path, keep_vba=True, keep_links=False)
+        tmp_dir = tempfile.mkdtemp()
         try:
-            for change in other_changes:
-                _dispatch_openpyxl(owb, change)
-
-            if has_vba_changes and is_xlsx:
-                # Save to temp dir first (OneDrive / network share safe)
-                tmp_dir = tempfile.mkdtemp()
-                try:
-                    tmp_path = os.path.join(tmp_dir, os.path.basename(saved_path))
-                    owb.save(tmp_path)
-                    shutil.move(tmp_path, saved_path)
-                finally:
-                    shutil.rmtree(tmp_dir, ignore_errors=True)
-                try:
-                    os.remove(file_path)
-                except OSError:
-                    pass
-            else:
-                tmp_dir = tempfile.mkdtemp()
-                try:
-                    tmp_path = os.path.join(tmp_dir, os.path.basename(saved_path))
-                    owb.save(tmp_path)
-                    shutil.move(tmp_path, saved_path)
-                finally:
-                    shutil.rmtree(tmp_dir, ignore_errors=True)
+            tmp_path = os.path.join(tmp_dir, os.path.basename(saved_path))
+            owb.save(tmp_path)
+            shutil.move(tmp_path, saved_path)
         finally:
-            owb.close()
-
-    # ── Step 2: COM for VBA-only changes ─────────────────────────────────────
-    if vba_changes:
-        _apply_vba_via_com(saved_path, vba_changes)
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+    finally:
+        owb.close()
 
     return saved_path
 
@@ -107,6 +77,7 @@ def _dispatch_openpyxl(owb: Any, change: Change) -> None:
     handler = _OPENPYXL_HANDLERS.get(op)
     if handler is None:
         raise ApplyError(f"Unknown change type: '{op}'")
+    _log.debug("dispatch: %s  params=%s", op, change.params)
     handler(owb, change.params)
 
 
@@ -573,116 +544,6 @@ def _set_zoom(owb: Any, p: dict) -> None:
     """Set the sheet zoom level (10-400)."""
     ws = _get_openpyxl_sheet(owb, p["sheet"])
     ws.sheet_view.zoomScale = max(10, min(400, int(p["zoom"])))
-
-
-# ── VBA via COM ───────────────────────────────────────────────────────────────
-
-def _apply_vba_via_com(file_path: str, changes: list[Change]) -> None:
-    """Apply VBA-only changes via COM. file_path must already be .xlsm."""
-    try:
-        import pythoncom
-        import win32com.client as win32
-    except ImportError as exc:
-        raise ApplyError("pywin32 is required for VBA operations.") from exc
-
-    pythoncom.CoInitialize()
-    excel = None
-    com_wb = None
-    try:
-        excel = win32.DispatchEx("Excel.Application")
-        excel.Visible = True   # must be visible during Open -- headless blocks on OneDrive sync
-        excel.DisplayAlerts = False
-        excel.ScreenUpdating = False
-        excel.EnableEvents = False
-        excel.AskToUpdateLinks = False
-        excel.AutomationSecurity = 3
-        try:
-            excel.Calculation = -4135
-        except Exception:  # noqa: BLE001
-            pass
-
-        com_wb = excel.Workbooks.Open(file_path, UpdateLinks=False, ReadOnly=False)
-        excel.Visible = False
-
-        for change in changes:
-            if change.type == "set_vba":
-                _com_set_vba(com_wb, change.params)
-            elif change.type == "add_vba_module":
-                _com_add_vba_module(com_wb, change.params)
-            elif change.type == "delete_vba_module":
-                _com_delete_vba_module(com_wb, change.params)
-
-        com_wb.Save()
-
-    except ApplyError:
-        raise
-    except Exception as exc:
-        raise ApplyError(f"COM VBA error: {exc}") from exc
-    finally:
-        if excel is not None:
-            try:
-                excel.EnableEvents = True
-            except Exception:  # noqa: BLE001
-                pass
-            try:
-                excel.Calculation = -4105
-            except Exception:  # noqa: BLE001
-                pass
-            try:
-                excel.DisplayAlerts = True
-                excel.ScreenUpdating = True
-            except Exception:  # noqa: BLE001
-                pass
-        try:
-            if com_wb is not None:
-                com_wb.Close(SaveChanges=False)
-        except Exception:  # noqa: BLE001
-            pass
-        try:
-            if excel is not None:
-                excel.Quit()
-        except Exception:  # noqa: BLE001
-            pass
-        pythoncom.CoUninitialize()
-
-
-def _com_get_vba_component(com_wb: Any, name: str) -> Any:
-    try:
-        return com_wb.VBProject.VBComponents(name)
-    except Exception as exc:
-        raise ApplyError(
-            f"VBA module '{name}' not found. "
-            "Enable 'Trust access to the VBA project object model'."
-        ) from exc
-
-
-def _com_set_vba(com_wb: Any, p: dict) -> None:
-    comp = _com_get_vba_component(com_wb, p["module"])
-    cm = comp.CodeModule
-    if cm.CountOfLines > 0:
-        cm.DeleteLines(1, cm.CountOfLines)
-    code: str = p["code"]
-    if code:
-        cm.InsertLines(1, code)
-
-
-def _com_add_vba_module(com_wb: Any, p: dict) -> None:
-    try:
-        comp = com_wb.VBProject.VBComponents.Add(1)  # vbext_ct_StdModule
-        comp.Name = p["name"]
-        code: str = p.get("code", "")
-        if code:
-            comp.CodeModule.InsertLines(1, code)
-    except Exception as exc:
-        raise ApplyError(
-            f"Cannot add VBA module: {exc}. "
-            "Enable 'Trust access to the VBA project object model'."
-        ) from exc
-
-
-def _com_delete_vba_module(com_wb: Any, p: dict) -> None:
-    comp = _com_get_vba_component(com_wb, p["name"])
-    com_wb.VBProject.VBComponents.Remove(comp)
 
 
 # ── handler registry (module-level for performance) ───────────────────────────

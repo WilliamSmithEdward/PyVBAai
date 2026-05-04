@@ -8,8 +8,11 @@ import os
 
 from PySide6.QtCore import QThread, Signal
 
+from app.logger import get_logger
 from models.conversation import Change
 from models.workbook import ContextConfig
+
+_log = get_logger(__name__)
 
 
 class ExcelReaderWorker(QThread):
@@ -25,19 +28,17 @@ class ExcelReaderWorker(QThread):
 
     def run(self) -> None:
         try:
-            import pythoncom
-            pythoncom.CoInitialize()
             from core.excel_reader import read_workbook
+            _log.debug("ExcelReaderWorker: reading %s", self._path)
             result = read_workbook(self._path, self._config)
+            _log.debug(
+                "ExcelReaderWorker: loaded %d sheets, error=%s",
+                len(result.sheets), result.extraction_error,
+            )
             self.finished.emit(result)
         except Exception as exc:
+            _log.exception("ExcelReaderWorker error: %s", exc)
             self.error.emit(str(exc))
-        finally:
-            try:
-                import pythoncom
-                pythoncom.CoUninitialize()
-            except Exception:
-                pass
 
 
 class AIWorker(QThread):
@@ -60,10 +61,16 @@ class AIWorker(QThread):
     def run(self) -> None:
         try:
             from core.ai_client import AIClient
+            _log.debug("AIWorker: sending %d messages, model=%s", len(self._messages), self._model)
             client = AIClient(model=self._model)
             result = client.send(self._messages, self._context)
+            _log.debug(
+                "AIWorker: response received, %d changes, message=%r",
+                len(result.changes), result.message[:120] if result.message else "",
+            )
             self.finished.emit(result)
         except Exception as exc:
+            _log.exception("AIWorker error: %s", exc)
             self.error.emit(str(exc))
 
 
@@ -87,11 +94,20 @@ class ExcelWriterWorker(QThread):
             from core.backup_manager import create_backup
             from core.excel_writer import apply_changes
 
+            _log.debug(
+                "ExcelWriterWorker: applying %d changes to %s",
+                len(self._changes), self._path,
+            )
+            for i, c in enumerate(self._changes):
+                _log.debug("  change[%d]: type=%s params=%s", i, c.type, c.params)
             backup_path = create_backup(self._path, self._max_backups)
+            _log.debug("ExcelWriterWorker: backup created at %s", backup_path)
             saved_path = apply_changes(self._path, self._changes)
+            _log.debug("ExcelWriterWorker: saved to %s", saved_path)
             self.finished.emit(backup_path, saved_path)
 
         except Exception as exc:
+            _log.exception("ExcelWriterWorker error: %s", exc)
             self.error.emit(str(exc))
         finally:
             try:

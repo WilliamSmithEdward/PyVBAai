@@ -1,6 +1,13 @@
 # Virtual environment
 .venv/
 
+# Local env / secrets
+.env.local
+
+# Debug logs
+debug/*.log
+debug/*.log.*
+
 # PyInstaller
 build/
 dist/
