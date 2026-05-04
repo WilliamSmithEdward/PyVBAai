@@ -332,7 +332,7 @@ class MainWindow(QMainWindow):
         self._pending_response = None
         self._on_user_message(f"Please revise the plan: {note}")
 
-    def _on_write_done(self, backup_path: str) -> None:
+    def _on_write_done(self, backup_path: str, saved_path: str) -> None:
         self._chat.set_input_enabled(True)
         bname = os.path.basename(backup_path)
         self._chat.add_message(
@@ -341,9 +341,9 @@ class MainWindow(QMainWindow):
             "system",
         )
         self._pending_response = None
-        # Re-read to update context
+        # Re-read to update context (saved_path may differ if .xlsx was promoted to .xlsm)
         if self._wb:
-            self.load_file(self._wb.file_path)
+            self.load_file(saved_path)
 
     def _on_write_error(self, err: str) -> None:
         self._chat.set_input_enabled(True)

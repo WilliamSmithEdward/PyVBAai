@@ -195,9 +195,9 @@ class TestExcelWriterWorker:
     def test_finished_signal_emitted_with_backup_path(self):
         results = []
         w = ExcelWriterWorker("C:/test/book.xlsx", [])
-        w.finished.connect(lambda p: results.append(p))
-        w.finished.emit("C:/test/backups/book_20260503_120000.xlsx")
-        assert results == ["C:/test/backups/book_20260503_120000.xlsx"]
+        w.finished.connect(lambda backup, saved: results.append((backup, saved)))
+        w.finished.emit("C:/test/backups/book_20260503_120000.xlsx", "C:/test/book.xlsx")
+        assert results == [("C:/test/backups/book_20260503_120000.xlsx", "C:/test/book.xlsx")]
 
     def test_error_signal_on_failure(self):
         errors = []
@@ -216,16 +216,16 @@ class TestExcelWriterWorker:
         monkeypatch.setattr(bm, "create_backup",
                             lambda path, max_b: backup_called.append(path) or "fake_backup.xlsx")
         monkeypatch.setattr(ew, "apply_changes",
-                            lambda path, changes: apply_called.append(path))
+                            lambda path, changes: apply_called.append(path) or path)
 
         fake_pythoncom = MagicMock()
         with patch.dict(sys.modules, {"pythoncom": fake_pythoncom}):
             changes = [Change(type="set_cell", params={"sheet": "S", "cell": "A1", "value": 1})]
             w = ExcelWriterWorker("C:/test/book.xlsx", changes)
             finished_paths = []
-            w.finished.connect(lambda p: finished_paths.append(p))
+            w.finished.connect(lambda backup, saved: finished_paths.append((backup, saved)))
             w.run()
 
         assert backup_called == ["C:/test/book.xlsx"]
         assert apply_called == ["C:/test/book.xlsx"]
-        assert finished_paths == ["fake_backup.xlsx"]
+        assert finished_paths == [("fake_backup.xlsx", "C:/test/book.xlsx")]

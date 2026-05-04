@@ -26,9 +26,16 @@ class ApplyError(Exception):
     """Raised when a change operation fails."""
 
 
-def apply_changes(file_path: str, changes: list[Change]) -> None:
+_VBA_OPS = {"set_vba", "add_vba_module", "delete_vba_module"}
+
+
+def apply_changes(file_path: str, changes: list[Change]) -> str:
     """
     Open *file_path* in Excel (writable), apply every change, save and close.
+
+    Returns the actual saved path.  If *file_path* is ``.xlsx`` and any VBA
+    changes are present the workbook is promoted to ``.xlsm`` (Excel silently
+    strips VBA when saving in the macro-free xlsx format).
 
     Raises ApplyError with a descriptive message on the first failure.
     Callers should create a backup BEFORE calling this function.
@@ -39,6 +46,7 @@ def apply_changes(file_path: str, changes: list[Change]) -> None:
     pythoncom.CoInitialize()
     excel = None
     wb = None
+    saved_path = file_path
     norm_path = os.path.normcase(os.path.abspath(file_path))
 
     try:
@@ -74,8 +82,17 @@ def apply_changes(file_path: str, changes: list[Change]) -> None:
         for change in changes:
             _dispatch(wb, change)
 
-        # Save in original format
-        wb.Save()
+        # Save — upgrade to .xlsm when VBA changes are applied to an .xlsx file;
+        # Excel silently strips all VBA when saving in the macro-free xlsx format.
+        if any(c.operation in _VBA_OPS for c in changes) and file_path.lower().endswith(".xlsx"):
+            saved_path = file_path[:-5] + ".xlsm"
+            wb.SaveAs(Filename=saved_path, FileFormat=52)  # xlOpenXMLWorkbookMacroEnabled
+            try:
+                os.remove(file_path)
+            except OSError:
+                pass
+        else:
+            wb.Save()
 
     except ApplyError:
         raise
@@ -103,6 +120,8 @@ def apply_changes(file_path: str, changes: list[Change]) -> None:
         except Exception:
             pass
         pythoncom.CoUninitialize()
+
+    return saved_path
 
 
 # ── dispatcher ───────────────────────────────────────────────────────────────

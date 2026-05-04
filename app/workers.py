@@ -70,7 +70,7 @@ class AIWorker(QThread):
 class ExcelWriterWorker(QThread):
     """Apply changes to an Excel workbook on a background thread."""
 
-    finished = Signal(str)  # backup path
+    finished = Signal(str, str)  # backup path, saved path (may differ if .xlsx→.xlsm)
     error = Signal(str)
 
     def __init__(self, file_path: str, changes: list[Change], max_backups: int = 20) -> None:
@@ -88,8 +88,8 @@ class ExcelWriterWorker(QThread):
             from core.excel_writer import apply_changes
 
             backup_path = create_backup(self._path, self._max_backups)
-            apply_changes(self._path, self._changes)
-            self.finished.emit(backup_path)
+            saved_path = apply_changes(self._path, self._changes)
+            self.finished.emit(backup_path, saved_path)
 
         except Exception as exc:
             self.error.emit(str(exc))
