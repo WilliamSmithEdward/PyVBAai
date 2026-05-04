@@ -175,9 +175,12 @@ class ChatInput(QTextEdit):
         self.setMinimumHeight(42)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.document().contentsChanged.connect(self._auto_resize)
+        self.document().documentLayout().documentSizeChanged.connect(self._auto_resize)
 
-    def _auto_resize(self) -> None:
-        doc_h = int(self.document().size().height()) + 16
+    def _auto_resize(self, *_args) -> None:
+        doc = self.document()
+        doc.setTextWidth(self.viewport().width())
+        doc_h = int(doc.size().height()) + 16
         clamped = max(42, min(doc_h, 120))
         self.setFixedHeight(clamped)
 

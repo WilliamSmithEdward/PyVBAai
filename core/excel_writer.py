@@ -47,50 +47,65 @@ def apply_changes(file_path: str, changes: list[Change]) -> str:
     excel = None
     wb = None
     saved_path = file_path
-    norm_path = os.path.normcase(os.path.abspath(file_path))
+
+    # Fail fast with a clear message if the file is locked by another process.
+    try:
+        with open(file_path, "r+b"):
+            pass
+    except PermissionError as exc:
+        fname = os.path.basename(file_path)
+        raise ApplyError(
+            f"\u2018{fname}\u2019 is open in another program. "
+            "Close it and try again."
+        ) from exc
+    except OSError as exc:
+        raise ApplyError(f"Cannot access \u2018{os.path.basename(file_path)}\u2019: {exc}") from exc
 
     try:
-        # Attach to a running Excel if possible
-        try:
-            excel = win32.GetActiveObject("Excel.Application")
-            for w in excel.Workbooks:
-                try:
-                    if os.path.normcase(w.FullName) == norm_path:
-                        wb = w
-                        break
-                except Exception:
-                    pass
-        except Exception:
-            excel = None
-
-        if excel is None:
-            excel = win32.Dispatch("Excel.Application")
-            excel.Visible = False
-            excel.DisplayAlerts = False
-
-        if wb is None:
-            wb = excel.Workbooks.Open(file_path, UpdateLinks=False, ReadOnly=False)
-
+        # DispatchEx always spawns a new Excel process; Dispatch may reuse a
+        # lingering/zombie instance from the ROT and hang indefinitely.
+        excel = win32.DispatchEx("Excel.Application")
+        excel.Visible = False
         excel.DisplayAlerts = False
         excel.ScreenUpdating = False
         excel.EnableEvents = False
+        excel.AskToUpdateLinks = False
+        excel.AutomationSecurity = 3  # msoAutomationSecurityForceDisable — suppresses macro dialogs
         try:
             excel.Calculation = -4135  # xlCalculationManual — no recalc between writes
         except Exception:  # noqa: BLE001
             pass
+
+        wb = excel.Workbooks.Open(file_path, UpdateLinks=False, ReadOnly=False)
 
         for change in changes:
             _dispatch(wb, change)
 
         # Save — upgrade to .xlsm when VBA changes are applied to an .xlsx file;
         # Excel silently strips all VBA when saving in the macro-free xlsx format.
-        if any(c.operation in _VBA_OPS for c in changes) and file_path.lower().endswith(".xlsx"):
-            saved_path = file_path[:-5] + ".xlsm"
-            wb.SaveAs(Filename=saved_path, FileFormat=52)  # xlOpenXMLWorkbookMacroEnabled
+        if any(c.type in _VBA_OPS for c in changes) and file_path.lower().endswith(".xlsx"):
+            # SaveAs directly to a OneDrive/network folder fails because Excel can't
+            # create its temp file there (-2147352567).  Work around by saving to
+            # %TEMP% first, then moving the result to the final destination.
+            import shutil
+            import tempfile
+            final_path = os.path.abspath(file_path[:-5] + ".xlsm")
+            tmp_dir = tempfile.mkdtemp()
+            try:
+                tmp_path = os.path.join(tmp_dir, os.path.basename(final_path))
+                wb.SaveAs(Filename=tmp_path, FileFormat=52)  # xlOpenXMLWorkbookMacroEnabled
+                # Close before moving so Excel releases the file handle; prevent
+                # double-close in finally (the file will be gone from tmp_path).
+                wb.Close(SaveChanges=False)
+                wb = None
+                shutil.move(tmp_path, final_path)
+            finally:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
             try:
                 os.remove(file_path)
             except OSError:
                 pass
+            saved_path = final_path
         else:
             wb.Save()
 
@@ -115,7 +130,7 @@ def apply_changes(file_path: str, changes: list[Change]) -> str:
         except Exception:
             pass
         try:
-            if excel is not None and excel.Workbooks.Count == 0:
+            if excel is not None:
                 excel.Quit()
         except Exception:
             pass

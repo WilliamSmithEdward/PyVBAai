@@ -53,6 +53,7 @@ class WorkbookData:
     named_ranges: list[NamedRange] = field(default_factory=list)
     has_vba: bool = False
     extraction_error: str | None = None
+    loaded_mtime: float = 0.0  # os.path.getmtime() at the time the file was read
 
 
 @dataclass

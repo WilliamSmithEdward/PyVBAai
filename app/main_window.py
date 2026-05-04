@@ -57,6 +57,7 @@ class MainWindow(QMainWindow):
         self._writer_worker: ExcelWriterWorker | None = None
         self._new_wb_worker: NewWorkbookWorker | None = None
         self._pending_response: AIResponse | None = None
+        self._pending_user_message: str | None = None  # queued while stale reload runs
         self._dark_mode: bool = SettingsDialog.load_dark_mode()
 
         self._build_ui()
@@ -246,6 +247,13 @@ class MainWindow(QMainWindow):
         self._conversation.clear()
         self._conversation.workbook_path = wb.file_path
 
+        # If this reload was triggered by a stale-file check, resume the
+        # queued user message now that the context is fresh.
+        if self._pending_user_message is not None:
+            msg = self._pending_user_message
+            self._pending_user_message = None
+            self._on_user_message(msg)
+
     def _on_reader_error(self, err: str) -> None:
         self._chat.add_message(f"**Failed to load workbook:**\n\n{err}", "system")
         self._status_file_lbl.setText("  Load failed")
@@ -257,6 +265,21 @@ class MainWindow(QMainWindow):
             self._chat.add_message(
                 "Please load an Excel file first.", "system"
             )
+            return
+
+        # If the file has been modified since we last read it, reload first,
+        # then resume the user's message automatically once the reload finishes.
+        try:
+            current_mtime = os.path.getmtime(self._wb.file_path)
+        except OSError:
+            current_mtime = self._wb.loaded_mtime
+
+        if current_mtime != self._wb.loaded_mtime:
+            self._chat.add_message(
+                "_File has changed — reloading context before responding..._", "system"
+            )
+            self._pending_user_message = text
+            self.load_file(self._wb.file_path)
             return
 
         self._chat.add_message(text, "user")

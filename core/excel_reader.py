@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 from functools import lru_cache
+from typing import Any
 
 from models.workbook import (
     CellData,
@@ -94,16 +95,24 @@ def read_workbook(file_path: str, config: ContextConfig | None = None) -> Workbo
 
     name = os.path.basename(file_path)
     wb_data = WorkbookData(file_path=file_path, name=name)
+    try:
+        wb_data.loaded_mtime = os.path.getmtime(file_path)
+    except OSError:
+        pass
 
     excel = None
     wb = None
 
     try:
-        excel = win32.Dispatch("Excel.Application")
+        # DispatchEx always spawns a new Excel process; Dispatch may reuse a
+        # lingering/zombie instance from the ROT and hang indefinitely.
+        excel = win32.DispatchEx("Excel.Application")
         excel.Visible = False
         excel.DisplayAlerts = False
         excel.ScreenUpdating = False
         excel.EnableEvents = False
+        excel.AskToUpdateLinks = False
+        excel.AutomationSecurity = 3  # msoAutomationSecurityForceDisable — suppresses macro dialogs
         try:
             excel.Calculation = -4135  # xlCalculationManual — skip recalc on open
         except Exception:  # noqa: BLE001
@@ -262,7 +271,7 @@ def read_workbook(file_path: str, config: ContextConfig | None = None) -> Workbo
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
-def _normalise_range(raw: object, rows: int) -> list[list]:
+def _normalise_range(raw: Any, rows: int) -> list[list]:
     """
     COM returns different types depending on range shape:
       single cell  -> scalar
