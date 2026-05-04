@@ -104,21 +104,22 @@ class TestBuildContextCells:
         s = _make_sheet("Sheet1", {"A1": cell})
         wb = _make_wb(sheets=[s])
         ctx = build_context(wb)
-        assert 'A1="hello"' in ctx
+        assert 'R1: A="hello"' in ctx
 
     def test_numeric_value_unquoted(self):
         cell = CellData(row=1, col=1, address="A1", value=42)
         s = _make_sheet("Sheet1", {"A1": cell})
         wb = _make_wb(sheets=[s])
         ctx = build_context(wb)
-        assert "A1=42" in ctx
+        assert "R1: A=42" in ctx
 
     def test_formula_shown_with_braces(self):
         cell = CellData(row=1, col=1, address="A1", value=0, formula="=SUM(B:B)")
         s = _make_sheet("Sheet1", {"A1": cell})
         wb = _make_wb(sheets=[s])
         ctx = build_context(wb)
-        assert "A1={=SUM(B:B)}" in ctx
+        # leading '=' stripped inside braces in new compact format
+        assert "A={SUM(B:B)}" in ctx
 
     def test_long_string_truncated(self):
         long_val = "x" * 100
@@ -126,15 +127,15 @@ class TestBuildContextCells:
         s = _make_sheet("Sheet1", {"A1": cell})
         wb = _make_wb(sheets=[s])
         ctx = build_context(wb)
-        # Should be truncated to 80 chars + ellipsis
-        assert 'A1="' + "x" * 80 in ctx
+        # Should be truncated to 80 chars + ellipsis; address is now just column letter
+        assert 'A="' + "x" * 80 in ctx
 
     def test_none_value_rendered(self):
         cell = CellData(row=1, col=1, address="A1", value=None)
         s = _make_sheet("Sheet1", {"A1": cell})
         wb = _make_wb(sheets=[s])
         ctx = build_context(wb)
-        assert "A1=None" in ctx
+        assert "R1: A=None" in ctx
 
     def test_sheet_header_present(self):
         wb = _make_wb(sheets=[_make_sheet("MySheet")])
@@ -149,9 +150,9 @@ class TestBuildContextCells:
         s = _make_sheet("Sheet1", cells)
         wb = _make_wb(sheets=[s])
         ctx = build_context(wb)
-        # Both A1 and B1 should appear on the same indented line
+        # Both columns should appear on the same R1: line
         lines = ctx.splitlines()
-        data_lines = [ln for ln in lines if "A1=" in ln and "B1=" in ln]
+        data_lines = [ln for ln in lines if "R1:" in ln and "A=1" in ln and "B=2" in ln]
         assert len(data_lines) == 1
 
     def test_truncated_sheet_shows_row_counts(self):
@@ -223,7 +224,7 @@ class TestBuildContextFiltering:
         ctx = build_context(wb, config)
         assert "A1=" not in ctx
         assert "C3=" not in ctx
-        assert 'E5="outside"' in ctx
+        assert 'R5: E="outside"' in ctx
 
     def test_parse_area_addr_valid(self):
         assert _parse_area_addr("$A$1:$C$10") == (1, 1, 10, 3)

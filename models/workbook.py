@@ -74,6 +74,13 @@ class WorkbookData:
     loaded_mtime: float = 0.0  # os.path.getmtime() at the time the file was read
 
 
+# All format field keys that can be included or excluded from context output.
+ALL_FMT_FIELDS: frozenset[str] = frozenset({
+    "number_format", "bold", "italic", "underline",
+    "font_color", "bg_color", "h_align", "v_align", "wrap_text",
+})
+
+
 @dataclass
 class ContextConfig:
     """What to include when building the GPT context."""
@@ -85,3 +92,7 @@ class ContextConfig:
     excluded_sheets: list[str] = field(default_factory=list)
     excluded_vba_modules: list[str] = field(default_factory=list)
     excluded_areas: dict[str, list[str]] = field(default_factory=dict)
+    # Limit rows shown per contiguous row-run (None = unlimited)
+    max_rows_per_area: int | None = None
+    # Which formatting fields to emit in cell notation (default = all)
+    fmt_include: set[str] = field(default_factory=lambda: set(ALL_FMT_FIELDS))

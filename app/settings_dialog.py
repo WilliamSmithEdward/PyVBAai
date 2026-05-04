@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QFormLayout,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -23,7 +24,7 @@ from PySide6.QtWidgets import (
 
 from app.config import get_settings
 from core.ai_client import AIClient
-from models.workbook import ContextConfig
+from models.workbook import ALL_FMT_FIELDS, ContextConfig
 
 
 def _qbool(val) -> bool:
@@ -122,19 +123,63 @@ class SettingsDialog(QDialog):
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
 
+        # -- Inclusions -------------------------------------------------------
         form = QFormLayout()
-
         self._include_formulas = QCheckBox("Include cell formulas in context")
         self._include_vba = QCheckBox("Include VBA code in context")
         self._include_named = QCheckBox("Include named ranges in context")
         form.addRow(self._include_formulas)
         form.addRow(self._include_vba)
         form.addRow(self._include_named)
-
         layout.addLayout(form)
 
+        # -- Max rows per area ------------------------------------------------
+        rows_group = QGroupBox("Row limit per data area")
+        rows_layout = QHBoxLayout(rows_group)
+        rows_layout.setSpacing(8)
+        self._max_rows_enabled = QCheckBox("Limit to")
+        self._max_rows_spin = QSpinBox()
+        self._max_rows_spin.setRange(1, 10000)
+        self._max_rows_spin.setValue(50)
+        self._max_rows_spin.setSuffix(" rows")
+        self._max_rows_spin.setFixedWidth(100)
+        self._max_rows_enabled.toggled.connect(self._max_rows_spin.setEnabled)
+        rows_layout.addWidget(self._max_rows_enabled)
+        rows_layout.addWidget(self._max_rows_spin)
+        rows_layout.addStretch()
+        layout.addWidget(rows_group)
+
+        # -- Format field toggles ---------------------------------------------
+        fmt_group = QGroupBox("Cell formatting to include in context")
+        fmt_layout = QVBoxLayout(fmt_group)
+        fmt_layout.setSpacing(4)
+        # ordered label -> key pairs
+        self._fmt_checks: dict[str, QCheckBox] = {}
+        fmt_fields = [
+            ("number_format", "Number format  (e.g. 0.00%, dd/mm/yyyy)"),
+            ("bold",          "Bold"),
+            ("italic",        "Italic"),
+            ("underline",     "Underline"),
+            ("font_color",    "Font colour"),
+            ("bg_color",      "Background colour"),
+            ("h_align",       "Horizontal alignment"),
+            ("v_align",       "Vertical alignment"),
+            ("wrap_text",     "Wrap text"),
+        ]
+        row1 = QHBoxLayout()
+        row2 = QHBoxLayout()
+        for i, (key, label) in enumerate(fmt_fields):
+            cb = QCheckBox(label)
+            self._fmt_checks[key] = cb
+            (row1 if i < 5 else row2).addWidget(cb)
+        row1.addStretch()
+        row2.addStretch()
+        fmt_layout.addLayout(row1)
+        fmt_layout.addLayout(row2)
+        layout.addWidget(fmt_group)
+
         note = QLabel(
-            "Per-sheet and per-module context filtering is available "
+            "Per-sheet and per-module filtering is available "
             "via the <b>Context Filter</b> button in the workbook explorer sidebar."
         )
         note.setWordWrap(True)
@@ -196,6 +241,12 @@ class SettingsDialog(QDialog):
         self._include_formulas.setChecked(_qbool(s.value("context/include_formulas", True)))
         self._include_vba.setChecked(_qbool(s.value("context/include_vba", True)))
         self._include_named.setChecked(_qbool(s.value("context/include_named_ranges", True)))
+        max_rows_enabled = _qbool(s.value("context/max_rows_enabled", False))
+        self._max_rows_enabled.setChecked(max_rows_enabled)
+        self._max_rows_spin.setValue(int(s.value("context/max_rows", 50)))
+        self._max_rows_spin.setEnabled(max_rows_enabled)
+        for key, cb in self._fmt_checks.items():
+            cb.setChecked(_qbool(s.value(f"context/fmt_{key}", True)))
 
         # Backups
         self._max_backups_spin.setValue(int(s.value("backups/max_keep", 20)))
@@ -208,6 +259,10 @@ class SettingsDialog(QDialog):
         s.setValue("context/include_formulas", self._include_formulas.isChecked())
         s.setValue("context/include_vba", self._include_vba.isChecked())
         s.setValue("context/include_named_ranges", self._include_named.isChecked())
+        s.setValue("context/max_rows_enabled", self._max_rows_enabled.isChecked())
+        s.setValue("context/max_rows", self._max_rows_spin.value())
+        for key, cb in self._fmt_checks.items():
+            s.setValue(f"context/fmt_{key}", cb.isChecked())
 
         s.setValue("backups/max_keep", self._max_backups_spin.value())
         s.setValue("appearance/dark_mode", self._dark_mode.isChecked())
@@ -230,6 +285,13 @@ class SettingsDialog(QDialog):
             if "||" in pair:
                 sname, aaddr = pair.split("||", 1)
                 excluded_areas.setdefault(sname, []).append(aaddr)
+        max_rows: int | None = None
+        if _qbool(s.value("context/max_rows_enabled", False)):
+            max_rows = int(s.value("context/max_rows", 50))
+        fmt_include: set[str] = {
+            key for key in ALL_FMT_FIELDS
+            if _qbool(s.value(f"context/fmt_{key}", True))
+        }
         return ContextConfig(
             include_formulas=_qbool(s.value("context/include_formulas", True)),
             include_vba=_qbool(s.value("context/include_vba", True)),
@@ -237,6 +299,8 @@ class SettingsDialog(QDialog):
             excluded_sheets=excluded_sheets,
             excluded_vba_modules=excluded_vba,
             excluded_areas=excluded_areas,
+            max_rows_per_area=max_rows,
+            fmt_include=fmt_include,
         )
 
     @staticmethod
