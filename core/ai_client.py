@@ -131,9 +131,9 @@ class AIClient:
     def fetch_models_from_api() -> list[str]:
         """Fetch available GPT model IDs from the OpenAI API.
 
-        Filters to models whose IDs start with 'gpt-' and excludes versioned
-        snapshot aliases (e.g. gpt-4-0314, gpt-4o-2024-05-13) in favour of
-        the stable, always-latest aliases (e.g. gpt-4o, gpt-4-turbo).
+        Keeps only GPT-5 and above, in their base or -mini forms.
+        Excludes older generations (gpt-4, gpt-3.5, ...), nano, turbo,
+        instruct, dated snapshots, and any other variants.
         Returns an empty list if the API key is absent or the request fails.
         Results are cached for the lifetime of the process.
         """
@@ -146,8 +146,9 @@ class AIClient:
         import urllib.error
         import urllib.request
 
-        # Matches trailing date-based suffixes: -0314, -0613, -2024-05-13, etc.
-        _dated = re.compile(r"-\d{4}(-\d{2}-\d{2})?$")
+        # Allow: gpt-5, gpt-5.4, gpt-5.5, gpt-5.4-mini, gpt-10.0-mini, ...
+        # Major version must be >= 5; only base or -mini suffix permitted.
+        _keep = re.compile(r"^gpt-([5-9]\d*|\d{2,})(\.\d+)?(-mini)?$")
 
         api_key = os.environ.get("OPENAI_API_KEY", "").strip()
         if not api_key:
@@ -162,9 +163,7 @@ class AIClient:
             models = sorted(
                 m["id"]
                 for m in data.get("data", [])
-                if isinstance(m.get("id"), str)
-                and m["id"].startswith("gpt-")
-                and not _dated.search(m["id"])
+                if isinstance(m.get("id"), str) and _keep.match(m["id"])
             )
             _cached_models = models
             return models

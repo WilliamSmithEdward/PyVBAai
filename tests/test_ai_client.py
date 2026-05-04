@@ -134,15 +134,14 @@ class TestAIClient:
     def test_available_models_returns_list(self, monkeypatch):
         """fetch_models_from_api should return a sorted list when the API responds."""
         import json
-        import io
         import core.ai_client as ai_mod
 
         fake_payload = json.dumps({
             "object": "list",
             "data": [
-                {"id": "gpt-4o", "object": "model"},
-                {"id": "gpt-4o-mini", "object": "model"},
-                {"id": "gpt-4", "object": "model"},
+                {"id": "gpt-5.5", "object": "model"},
+                {"id": "gpt-5.4", "object": "model"},
+                {"id": "gpt-5.4-mini", "object": "model"},
             ],
         }).encode()
 
@@ -156,19 +155,19 @@ class TestAIClient:
 
         monkeypatch.setattr("urllib.request.urlopen", lambda *a, **kw: _FakeResp())
         monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-        ai_mod._cached_models = None  # reset cache
+        ai_mod._cached_models = None
 
         models = AIClient.fetch_models_from_api()
         assert isinstance(models, list)
         assert len(models) > 0
 
-    def test_available_models_contains_gpt4o(self, monkeypatch):
+    def test_available_models_contains_gpt5(self, monkeypatch):
         import json
         import core.ai_client as ai_mod
 
         fake_payload = json.dumps({
             "object": "list",
-            "data": [{"id": "gpt-4o"}, {"id": "gpt-4o-mini"}],
+            "data": [{"id": "gpt-5.4"}, {"id": "gpt-5.4-mini"}],
         }).encode()
 
         class _FakeResp:
@@ -183,15 +182,15 @@ class TestAIClient:
         monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
         ai_mod._cached_models = None
 
-        assert "gpt-4o" in AIClient.fetch_models_from_api()
+        assert "gpt-5.4" in AIClient.fetch_models_from_api()
 
-    def test_available_models_contains_gpt4o_mini(self, monkeypatch):
+    def test_available_models_contains_gpt5_mini(self, monkeypatch):
         import json
         import core.ai_client as ai_mod
 
         fake_payload = json.dumps({
             "object": "list",
-            "data": [{"id": "gpt-4o"}, {"id": "gpt-4o-mini"}],
+            "data": [{"id": "gpt-5.4"}, {"id": "gpt-5.4-mini"}],
         }).encode()
 
         class _FakeResp:
@@ -206,7 +205,7 @@ class TestAIClient:
         monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
         ai_mod._cached_models = None
 
-        assert "gpt-4o-mini" in AIClient.fetch_models_from_api()
+        assert "gpt-5.4-mini" in AIClient.fetch_models_from_api()
 
     def test_available_models_returns_empty_without_key(self, monkeypatch):
         import core.ai_client as ai_mod
@@ -226,13 +225,13 @@ class TestAIClient:
         assert AIClient.fetch_models_from_api() == []
 
     def test_available_models_filters_non_gpt(self, monkeypatch):
-        """Non-gpt- prefixed models should be excluded."""
+        """Non-gpt- prefixed models and older GPT versions should be excluded."""
         import json
         import core.ai_client as ai_mod
 
         fake_payload = json.dumps({
             "object": "list",
-            "data": [{"id": "gpt-4o"}, {"id": "dall-e-3"}, {"id": "whisper-1"}],
+            "data": [{"id": "gpt-5.4"}, {"id": "dall-e-3"}, {"id": "whisper-1"}],
         }).encode()
 
         class _FakeResp:
@@ -248,24 +247,27 @@ class TestAIClient:
         ai_mod._cached_models = None
 
         models = AIClient.fetch_models_from_api()
-        assert models == ["gpt-4o"]
+        assert models == ["gpt-5.4"]
 
-    def test_available_models_filters_dated_snapshots(self, monkeypatch):
-        """Versioned snapshot models (date suffixes) should be excluded."""
+    def test_available_models_allowlist_filter(self, monkeypatch):
+        """Only gpt-5+ base and -mini variants should survive the filter."""
         import json
         import core.ai_client as ai_mod
 
         fake_payload = json.dumps({
             "object": "list",
             "data": [
-                {"id": "gpt-4o"},
-                {"id": "gpt-4o-mini"},
-                {"id": "gpt-4o-2024-05-13"},       # full date suffix
-                {"id": "gpt-4-0314"},               # short date suffix
-                {"id": "gpt-4-0613"},
-                {"id": "gpt-3.5-turbo-0301"},
-                {"id": "gpt-4-turbo-2024-04-09"},
-                {"id": "gpt-4-turbo"},              # stable alias - keep
+                {"id": "gpt-5.5"},           # keep: v5 base
+                {"id": "gpt-5.4"},           # keep: v5 base
+                {"id": "gpt-5.4-mini"},      # keep: v5 mini
+                {"id": "gpt-5.4-nano"},      # drop: nano
+                {"id": "gpt-4o"},            # drop: v4
+                {"id": "gpt-4o-mini"},       # drop: v4
+                {"id": "gpt-4-turbo"},       # drop: v4
+                {"id": "gpt-3.5-turbo"},     # drop: v3
+                {"id": "gpt-5.4-2025-03-01"}, # drop: dated snapshot
+                {"id": "gpt-10.0"},          # keep: v10 base (future-proof)
+                {"id": "gpt-10.0-mini"},     # keep: v10 mini
             ],
         }).encode()
 
@@ -282,7 +284,7 @@ class TestAIClient:
         ai_mod._cached_models = None
 
         models = AIClient.fetch_models_from_api()
-        assert models == ["gpt-4-turbo", "gpt-4o", "gpt-4o-mini"]
+        assert models == ["gpt-10.0", "gpt-10.0-mini", "gpt-5.4", "gpt-5.4-mini", "gpt-5.5"]
 
     def test_available_models_caches_result(self, monkeypatch):
         """Second call should return cached result without hitting the network."""
@@ -295,7 +297,7 @@ class TestAIClient:
             call_count[0] += 1
             class _R:
                 def read(self):
-                    return json.dumps({"object": "list", "data": [{"id": "gpt-4o"}]}).encode()
+                    return json.dumps({"object": "list", "data": [{"id": "gpt-5.4"}]}).encode()
                 def __enter__(self):
                     return self
                 def __exit__(self, *_):
