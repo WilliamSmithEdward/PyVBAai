@@ -4,9 +4,16 @@
 """Dark / light QSS themes for PyVBAai."""
 from __future__ import annotations
 
+import pathlib
+import tempfile
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QBrush, QColor, QPainter, QPen
-from PySide6.QtWidgets import QApplication, QProxyStyle, QStyle
+from PySide6.QtWidgets import (
+    QApplication,
+    QProxyStyle,
+    QStyle,
+)
 
 _style_ref: _AppStyle | None = None
 
@@ -86,7 +93,7 @@ class _AppStyle(QProxyStyle):
 
         painter.restore()
 
-# ── Catppuccin Mocha (dark) ────────────────────────────────────────────────
+# ── Catppuccin Mocha (dark) ───────────────────────────────────────────────
 DARK_QSS = """
 /* ── Base ──────────────────────────────────────────────────────────── */
 QMainWindow, QDialog, QWidget {
@@ -266,10 +273,9 @@ QComboBox {
     padding: 4px 8px;
     min-width: 120px;
 }
-QComboBox::drop-down { border: none; width: 24px; }
-QComboBox::down-arrow { border: none; }
+QComboBox::drop-down { border: none; width: 28px; }
+QComboBox::down-arrow { image: url(__ARROW_PATH__); width: 12px; height: 8px; }
 QComboBox QAbstractItemView {
-    background-color: #313244;
     border: 1px solid #45475a;
     color: #cdd6f4;
     selection-background-color: #45475a;
@@ -461,7 +467,8 @@ QPushButton#ghostBtn { background-color: transparent; color: #1e66f5; border: 1p
 QPushButton#ghostBtn:hover { background-color: #dce0e8; }
 
 QComboBox { background-color: #dce0e8; border: 1px solid #bcc0cc; border-radius: 6px; color: #4c4f69; padding: 4px 8px; min-width: 120px; }
-QComboBox::drop-down { border: none; width: 24px; }
+QComboBox::drop-down { border: none; width: 28px; }
+QComboBox::down-arrow { image: url(__ARROW_PATH__); width: 12px; height: 8px; }
 QComboBox QAbstractItemView { background-color: #dce0e8; border: 1px solid #bcc0cc; color: #4c4f69; selection-background-color: #bcc0cc; outline: none; }
 
 QScrollBar:vertical { background: transparent; width: 8px; border: none; }
@@ -497,8 +504,24 @@ QTextBrowser#codeViewer { background-color: #e6e9ef; color: #4c4f69; border: 1px
 """
 
 
+def _chevron_svg_path(stroke: str) -> str:
+    """Write a chevron SVG to a temp file and return a forward-slash path for QSS url()."""
+    safe = stroke.lstrip("#")
+    p = pathlib.Path(tempfile.gettempdir()) / f"pyvbaai_chevron_{safe}.svg"
+    if not p.exists():
+        p.write_text(
+            f'<svg xmlns="http://www.w3.org/2000/svg" width="12" height="8" viewBox="0 0 12 8">'
+            f'<polyline points="1,1 6,7 11,1" fill="none" stroke="#{safe}"'
+            f' stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+            encoding="utf-8",
+        )
+    return str(p).replace("\\", "/")
+
+
 def apply_theme(app: QApplication, dark: bool = True) -> None:
     global _style_ref
     _style_ref = _AppStyle(dark)
     app.setStyle(_style_ref)
-    app.setStyleSheet(DARK_QSS if dark else LIGHT_QSS)
+    arrow = _chevron_svg_path("#89b4fa" if dark else "#1e66f5")
+    qss = (DARK_QSS if dark else LIGHT_QSS).replace("__ARROW_PATH__", arrow)
+    app.setStyleSheet(qss)

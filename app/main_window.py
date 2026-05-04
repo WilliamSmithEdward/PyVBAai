@@ -93,11 +93,15 @@ class MainWindow(QMainWindow):
 
         self._model_combo = QComboBox()
         from core.ai_client import AIClient
-        for m in AIClient.available_models():
+        for m in AIClient.fetch_models_from_api():
             self._model_combo.addItem(m)
         saved_model = SettingsDialog.load_model()
-        idx = self._model_combo.findText(saved_model)
-        if idx >= 0:
+        if saved_model:
+            idx = self._model_combo.findText(saved_model)
+            if idx < 0:
+                # Saved model not in current list — add it so it stays selectable
+                self._model_combo.addItem(saved_model)
+                idx = self._model_combo.count() - 1
             self._model_combo.setCurrentIndex(idx)
         self._model_combo.currentTextChanged.connect(self._on_model_changed)
         toolbar.addWidget(QLabel("  Model: "))
@@ -365,7 +369,8 @@ class MainWindow(QMainWindow):
                 self._apply_current_theme()
 
     def _on_model_changed(self, model: str) -> None:
-        QSettings().setValue("ai/model", model)
+        from app.config import get_settings
+        get_settings().setValue("ai/model", model)
 
     # ── Theme ──────────────────────────────────────────────────────────────────
 

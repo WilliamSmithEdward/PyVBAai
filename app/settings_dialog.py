@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import os
 
-from PySide6.QtCore import QSettings, Qt
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.config import get_settings
 from core.ai_client import AIClient
 from models.workbook import ContextConfig
 
@@ -40,7 +41,7 @@ class SettingsDialog(QDialog):
         self.setWindowTitle("Settings")
         self.setMinimumWidth(480)
         self.setModal(True)
-        self._settings = QSettings()
+        self._settings = get_settings()
         self._setup_ui()
         self._load_settings()
 
@@ -106,7 +107,8 @@ class SettingsDialog(QDialog):
         # Model selector
         form = QFormLayout()
         self._model_combo = QComboBox()
-        for m in AIClient.available_models():
+        self._model_combo.setPlaceholderText("Select a model...")
+        for m in AIClient.fetch_models_from_api():
             self._model_combo.addItem(m)
         form.addRow("Model:", self._model_combo)
         layout.addLayout(form)
@@ -180,10 +182,16 @@ class SettingsDialog(QDialog):
     def _load_settings(self) -> None:
         s = self._settings
         # AI
-        model = s.value("ai/model", "gpt-4o")
-        idx = self._model_combo.findText(model)
-        if idx >= 0:
+        model = s.value("ai/model") or ""
+        if model:
+            idx = self._model_combo.findText(model)
+            if idx < 0:
+                # Saved model not in current list (e.g. deprecated) — add it
+                self._model_combo.addItem(model)
+                idx = self._model_combo.count() - 1
             self._model_combo.setCurrentIndex(idx)
+        else:
+            self._model_combo.setCurrentIndex(-1)
         # Context
         self._include_formulas.setChecked(_qbool(s.value("context/include_formulas", True)))
         self._include_vba.setChecked(_qbool(s.value("context/include_vba", True)))
@@ -213,7 +221,7 @@ class SettingsDialog(QDialog):
     @staticmethod
     def load_context_config() -> ContextConfig:
         """Load context config from QSettings without opening the dialog."""
-        s = QSettings()
+        s = get_settings()
         excluded_sheets = list(s.value("context/excluded_sheets", []) or [])
         excluded_vba    = list(s.value("context/excluded_vba",    []) or [])
         excluded_area_pairs = list(s.value("context/excluded_areas", []) or [])
@@ -233,12 +241,12 @@ class SettingsDialog(QDialog):
 
     @staticmethod
     def load_model() -> str:
-        return QSettings().value("ai/model", "gpt-4o")
+        return get_settings().value("ai/model") or ""
 
     @staticmethod
     def load_max_backups() -> int:
-        return int(QSettings().value("backups/max_keep", 20))
+        return int(get_settings().value("backups/max_keep", 20))
 
     @staticmethod
     def load_dark_mode() -> bool:
-        return _qbool(QSettings().value("appearance/dark_mode", True))
+        return _qbool(get_settings().value("appearance/dark_mode", True))

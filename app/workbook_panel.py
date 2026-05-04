@@ -4,7 +4,7 @@
 """Left-sidebar panel showing the loaded workbook's structure."""
 from __future__ import annotations
 
-from PySide6.QtCore import QRect, QSettings, Qt, Signal
+from PySide6.QtCore import QRect, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QPainter, QPainterPath
 from PySide6.QtWidgets import (
     QDialog,
@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.config import get_settings
 from models.workbook import WorkbookData
 
 
@@ -127,7 +128,7 @@ class WorkbookPanel(QWidget):
         self._tree.clear()
         self._wb = wb
 
-        s = QSettings()
+        s = get_settings()
         excluded_sheets = set(s.value("context/excluded_sheets", []) or [])
         excluded_vba    = set(s.value("context/excluded_vba",    []) or [])
 
@@ -275,7 +276,7 @@ class WorkbookPanel(QWidget):
                     if child.checkState(0) == Qt.CheckState.Unchecked:
                         excluded_vba.append(data[1])
 
-        s = QSettings()
+        s = get_settings()
         s.setValue("context/excluded_sheets", excluded_sheets)
         s.setValue("context/excluded_vba", excluded_vba)
         s.setValue("context/excluded_areas", excluded_area_pairs)

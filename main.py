@@ -170,6 +170,104 @@ def _ensure_api_key() -> bool:
     return dlg.exec() == QDialog.DialogCode.Accepted
 
 
+def _ensure_model() -> bool:
+    """
+    If no AI model is configured, show a dialog letting the user pick one.
+    Fetches the live model list from the OpenAI API (key must already be set).
+    Returns True to continue, False to quit.
+    """
+    from app.config import get_settings
+    s = get_settings()
+    if (s.value("ai/model") or "").strip():
+        return True
+
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import (
+        QComboBox,
+        QDialog,
+        QDialogButtonBox,
+        QLabel,
+        QVBoxLayout,
+    )
+
+    from core.ai_client import AIClient
+
+    class _ModelDialog(QDialog):
+        def __init__(self) -> None:
+            super().__init__()
+            self.setWindowTitle("Select AI Model")
+            self.setMinimumWidth(420)
+            self.setWindowFlags(
+                self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint
+            )
+
+            layout = QVBoxLayout(self)
+            layout.setSpacing(12)
+            layout.setContentsMargins(20, 20, 20, 20)
+
+            title = QLabel("<b>Choose an AI model</b>")
+            title.setStyleSheet("font-size: 14px;")
+            layout.addWidget(title)
+
+            self._status = QLabel("Fetching available models from OpenAI\u2026")
+            layout.addWidget(self._status)
+
+            self._combo = QComboBox()
+            self._combo.setPlaceholderText("Select a model\u2026")
+            layout.addWidget(self._combo)
+
+            hint = QLabel(
+                "The selected model will be saved and used for all AI requests.\n"
+                "You can change it later in Settings."
+            )
+            hint.setWordWrap(True)
+            hint.setStyleSheet("color: #6c7086; font-size: 11px;")
+            layout.addWidget(hint)
+
+            self._buttons = QDialogButtonBox(
+                QDialogButtonBox.StandardButton.Ok
+                | QDialogButtonBox.StandardButton.Cancel
+            )
+            ok_btn = self._buttons.button(QDialogButtonBox.StandardButton.Ok)
+            ok_btn.setEnabled(False)
+            self._buttons.accepted.connect(self._on_ok)
+            self._buttons.rejected.connect(self.reject)
+            layout.addWidget(self._buttons)
+
+            # Fetch models synchronously (API key is already validated)
+            models = AIClient.fetch_models_from_api()
+            if models:
+                self._combo.addItems(models)
+                self._combo.setCurrentIndex(-1)
+                self._status.setText("Select a model to use:")
+                self._combo.currentIndexChanged.connect(self._on_selection_changed)
+            else:
+                self._status.setText(
+                    "Could not fetch model list. Check your API key and network.\n"
+                    "You can type a model ID directly (e.g. gpt-4o)."
+                )
+                self._combo.setEditable(True)
+                self._combo.currentTextChanged.connect(self._on_text_changed)
+
+        def _on_selection_changed(self, idx: int) -> None:
+            ok_btn = self._buttons.button(QDialogButtonBox.StandardButton.Ok)
+            ok_btn.setEnabled(idx >= 0)
+
+        def _on_text_changed(self, text: str) -> None:
+            ok_btn = self._buttons.button(QDialogButtonBox.StandardButton.Ok)
+            ok_btn.setEnabled(bool(text.strip()))
+
+        def _on_ok(self) -> None:
+            model = self._combo.currentText().strip()
+            if not model:
+                return
+            get_settings().setValue("ai/model", model)
+            self.accept()
+
+    dlg = _ModelDialog()
+    return dlg.exec() == QDialog.DialogCode.Accepted
+
+
 def main() -> None:
     from PySide6.QtWidgets import QApplication
 
@@ -189,6 +287,10 @@ def main() -> None:
 
     # ── API key check ─────────────────────────────────────────────────────────
     if not _ensure_api_key():
+        sys.exit(0)
+
+    # ── Model selection (required before opening main window) ────────────────
+    if not _ensure_model():
         sys.exit(0)
 
     from app.main_window import MainWindow

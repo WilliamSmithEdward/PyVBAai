@@ -15,6 +15,9 @@ from typing import Any
 
 from models.conversation import AIResponse, Change
 
+# Cache for model list fetched from the API (populated on first call)
+_cached_models: list[str] | None = None
+
 # ── System Prompt ─────────────────────────────────────────────────────────────
 _SYSTEM_PROMPT = """\
 You are PyVBAai, an expert Excel/VBA developer assistant embedded in a Windows desktop application.
@@ -125,8 +128,53 @@ class AIClient:
         return _parse_response(raw_json)
 
     @staticmethod
+    def fetch_models_from_api() -> list[str]:
+        """Fetch available GPT model IDs from the OpenAI API.
+
+        Filters to models whose IDs start with 'gpt-' and excludes versioned
+        snapshot aliases (e.g. gpt-4-0314, gpt-4o-2024-05-13) in favour of
+        the stable, always-latest aliases (e.g. gpt-4o, gpt-4-turbo).
+        Returns an empty list if the API key is absent or the request fails.
+        Results are cached for the lifetime of the process.
+        """
+        global _cached_models
+        if _cached_models is not None:
+            return _cached_models
+
+        import json
+        import re
+        import urllib.error
+        import urllib.request
+
+        # Matches trailing date-based suffixes: -0314, -0613, -2024-05-13, etc.
+        _dated = re.compile(r"-\d{4}(-\d{2}-\d{2})?$")
+
+        api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+        if not api_key:
+            return []
+        try:
+            req = urllib.request.Request(
+                "https://api.openai.com/v1/models",
+                headers={"Authorization": f"Bearer {api_key}"},
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read())
+            models = sorted(
+                m["id"]
+                for m in data.get("data", [])
+                if isinstance(m.get("id"), str)
+                and m["id"].startswith("gpt-")
+                and not _dated.search(m["id"])
+            )
+            _cached_models = models
+            return models
+        except (urllib.error.URLError, OSError, ValueError):
+            return []
+
+    @staticmethod
     def available_models() -> list[str]:
-        return ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo"]
+        """Alias for fetch_models_from_api(); kept for call-site compatibility."""
+        return AIClient.fetch_models_from_api()
 
 
 # ── response parsing ─────────────────────────────────────────────────────────
