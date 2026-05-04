@@ -495,6 +495,86 @@ def _set_auto_filter(owb: Any, p: dict) -> None:
     ws.auto_filter.ref = rng or None
 
 
+def _hide_rows(owb: Any, p: dict) -> None:
+    """Hide rows.  row = 1-based start row, count = number of rows (default 1)."""
+    ws = _get_openpyxl_sheet(owb, p["sheet"])
+    for r in range(int(p["row"]), int(p["row"]) + int(p.get("count", 1))):
+        ws.row_dimensions[r].hidden = True
+
+
+def _unhide_rows(owb: Any, p: dict) -> None:
+    """Unhide rows."""
+    ws = _get_openpyxl_sheet(owb, p["sheet"])
+    for r in range(int(p["row"]), int(p["row"]) + int(p.get("count", 1))):
+        ws.row_dimensions[r].hidden = False
+
+
+def _hide_cols(owb: Any, p: dict) -> None:
+    """Hide columns.  col = letter (e.g. 'B'), count = number of cols (default 1)."""
+    from openpyxl.utils import column_index_from_string, get_column_letter
+    ws = _get_openpyxl_sheet(owb, p["sheet"])
+    start = column_index_from_string(str(p["col"]).strip().upper())
+    for idx in range(start, start + int(p.get("count", 1))):
+        ws.column_dimensions[get_column_letter(idx)].hidden = True
+
+
+def _unhide_cols(owb: Any, p: dict) -> None:
+    """Unhide columns."""
+    from openpyxl.utils import column_index_from_string, get_column_letter
+    ws = _get_openpyxl_sheet(owb, p["sheet"])
+    start = column_index_from_string(str(p["col"]).strip().upper())
+    for idx in range(start, start + int(p.get("count", 1))):
+        ws.column_dimensions[get_column_letter(idx)].hidden = False
+
+
+def _clear_format(owb: Any, p: dict) -> None:
+    """Reset all formatting on a cell range to defaults (values are untouched)."""
+    import openpyxl.utils
+    from openpyxl.styles import Alignment, Border, Font, PatternFill
+    ws = _get_openpyxl_sheet(owb, p["sheet"])
+    try:
+        min_col, min_row, max_col, max_row = openpyxl.utils.range_boundaries(p["range"])
+        cells = [ws.cell(row=r, column=c)
+                 for r in range(min_row, max_row + 1)
+                 for c in range(min_col, max_col + 1)]
+    except Exception:  # noqa: BLE001
+        cells = [ws[p["range"]]]
+    for cell in cells:
+        cell.font = Font()
+        cell.fill = PatternFill()
+        cell.border = Border()
+        cell.alignment = Alignment()
+        cell.number_format = "General"
+
+
+def _protect_sheet(owb: Any, p: dict) -> None:
+    """Password-protect a sheet.  password='' for no password."""
+    ws = _get_openpyxl_sheet(owb, p["sheet"])
+    password = (p.get("password") or "").strip()
+    ws.protection.sheet = True
+    if password:
+        ws.protection.set_password(password)
+
+
+def _unprotect_sheet(owb: Any, p: dict) -> None:
+    """Remove sheet protection."""
+    ws = _get_openpyxl_sheet(owb, p["sheet"])
+    ws.protection.sheet = False
+
+
+def _set_print_area(owb: Any, p: dict) -> None:
+    """Set the print area for a sheet.  range='' to clear."""
+    ws = _get_openpyxl_sheet(owb, p["sheet"])
+    rng = (p.get("range") or "").strip()
+    ws.print_area = rng or None
+
+
+def _set_zoom(owb: Any, p: dict) -> None:
+    """Set the sheet zoom level (10-400)."""
+    ws = _get_openpyxl_sheet(owb, p["sheet"])
+    ws.sheet_view.zoomScale = max(10, min(400, int(p["zoom"])))
+
+
 # ── VBA via COM ───────────────────────────────────────────────────────────────
 
 def _apply_vba_via_com(file_path: str, changes: list[Change]) -> None:
@@ -629,6 +709,15 @@ _OPENPYXL_HANDLERS.update({
     "delete_cols":        _delete_cols,
     "set_tab_color":      _set_tab_color,
     "auto_filter":        _set_auto_filter,
+    "hide_rows":          _hide_rows,
+    "unhide_rows":        _unhide_rows,
+    "hide_cols":          _hide_cols,
+    "unhide_cols":        _unhide_cols,
+    "clear_format":       _clear_format,
+    "protect_sheet":      _protect_sheet,
+    "unprotect_sheet":    _unprotect_sheet,
+    "set_print_area":     _set_print_area,
+    "set_zoom":           _set_zoom,
     "set_named_range":   _add_named_range,
     "delete_named_range": _delete_named_range,
     "merge_cells":       _merge_cells,

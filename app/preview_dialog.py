@@ -51,6 +51,15 @@ _OP_META: dict[str, tuple[str, str]] = {
     "delete_cols":        ("", "Delete Columns"),
     "set_tab_color":      ("", "Set Tab Color"),
     "auto_filter":        ("", "Set Auto-Filter"),
+    "hide_rows":          ("", "Hide Rows"),
+    "unhide_rows":        ("", "Unhide Rows"),
+    "hide_cols":          ("", "Hide Columns"),
+    "unhide_cols":        ("", "Unhide Columns"),
+    "clear_format":       ("", "Clear Format"),
+    "protect_sheet":      ("", "Protect Sheet"),
+    "unprotect_sheet":    ("", "Unprotect Sheet"),
+    "set_print_area":     ("", "Set Print Area"),
+    "set_zoom":           ("", "Set Zoom"),
     "set_named_range":    ("", "Set Named Range"),
     "add_named_range":    ("", "Add Named Range"),
     "delete_named_range": ("", "Delete Named Range"),
@@ -161,6 +170,22 @@ def _format_details(op: str, p: dict) -> str:  # noqa: PLR0911
     if op == "auto_filter":
         rng = p.get('range', '')
         return f"Sheet: {p.get('sheet','')}   {'Clear filter' if not rng else f'Range: {rng}'}"
+    if op in ("hide_rows", "unhide_rows"):
+        return f"Sheet: {p.get('sheet','')}   Row: {p.get('row','')}   Count: {p.get('count',1)}"
+    if op in ("hide_cols", "unhide_cols"):
+        return f"Sheet: {p.get('sheet','')}   Col: {p.get('col','')}   Count: {p.get('count',1)}"
+    if op == "clear_format":
+        return f"Sheet: {p.get('sheet','')}   Range: {p.get('range','')}"
+    if op == "protect_sheet":
+        pw = p.get('password', '')
+        return f"Sheet: {p.get('sheet','')}   {'No password' if not pw else 'Password set'}"
+    if op == "unprotect_sheet":
+        return f"Sheet: {p.get('sheet','')}"
+    if op == "set_print_area":
+        rng = p.get('range', '')
+        return f"Sheet: {p.get('sheet','')}   {'Clear print area' if not rng else f'Range: {rng}'}"
+    if op == "set_zoom":
+        return f"Sheet: {p.get('sheet','')}   Zoom: {p.get('zoom','')}%"
     if op in ("set_named_range", "add_named_range"):
         return f"{p.get('name','')}  =  {p.get('refers_to','')}"
     if op == "delete_named_range":

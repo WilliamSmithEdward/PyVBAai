@@ -87,15 +87,24 @@ border values: "<style>" or "<style>:<RRGGBB>"  (e.g. "thin", "medium:FF0000")
 {"type":"delete_vba_module", "name":"ModuleName"}
 
 ### Rows & Columns
-{"type":"insert_rows",   "sheet":"S", "row":3, "count":1}
-{"type":"delete_rows",   "sheet":"S", "row":3, "count":1}
-{"type":"insert_cols",   "sheet":"S", "col":"B", "count":1}
-{"type":"delete_cols",   "sheet":"S", "col":"B", "count":1}
-{"type":"set_col_width", "sheet":"S", "columns":"A",   "width":20}  -- columns can be "A" or "A:D"
-{"type":"set_row_height","sheet":"S", "row":1,   "height":30}  -- height in points
-{"type":"freeze_panes",  "sheet":"S", "cell":"B2"}  -- freeze rows above and cols left of cell; cell="" to unfreeze
-{"type":"auto_filter",   "sheet":"S", "range":"A1:D1"}  -- range="" to clear
-{"type":"set_tab_color", "name":"Sheet1", "color":"FF0000"}  -- color is RRGGBB; color="" to clear
+{"type":"insert_rows",    "sheet":"S", "row":3, "count":1}
+{"type":"delete_rows",    "sheet":"S", "row":3, "count":1}
+{"type":"insert_cols",    "sheet":"S", "col":"B", "count":1}
+{"type":"delete_cols",    "sheet":"S", "col":"B", "count":1}
+{"type":"hide_rows",      "sheet":"S", "row":3, "count":2}
+{"type":"unhide_rows",    "sheet":"S", "row":3, "count":2}
+{"type":"hide_cols",      "sheet":"S", "col":"B", "count":1}
+{"type":"unhide_cols",    "sheet":"S", "col":"B", "count":1}
+{"type":"set_col_width",  "sheet":"S", "columns":"A",   "width":20}  -- columns can be "A" or "A:D"
+{"type":"set_row_height", "sheet":"S", "row":1,   "height":30}  -- height in points
+{"type":"freeze_panes",   "sheet":"S", "cell":"B2"}  -- freeze rows above and cols left of cell; cell="" to unfreeze
+{"type":"auto_filter",    "sheet":"S", "range":"A1:D1"}  -- range="" to clear
+{"type":"set_tab_color",  "name":"Sheet1", "color":"FF0000"}  -- color is RRGGBB; color="" to clear
+{"type":"set_zoom",       "sheet":"S", "zoom":75}  -- zoom level 10-400
+{"type":"set_print_area", "sheet":"S", "range":"A1:H50"}  -- range="" to clear
+{"type":"protect_sheet",   "sheet":"S", "password":""}  -- password optional
+{"type":"unprotect_sheet", "sheet":"S"}
+{"type":"clear_format",    "sheet":"S", "range":"A1:D10"}  -- resets all formatting to defaults (values untouched)
 
 ### Tables (Excel ListObject)
 {"type":"create_table", "sheet":"Sheet1", "range":"A1:D101", "name":"PostsTable", "style":"TableStyleMedium9"}
