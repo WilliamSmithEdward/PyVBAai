@@ -49,7 +49,12 @@ def apply_changes(file_path: str, changes: list[Change]) -> str:
     # ── Apply all changes via openpyxl ────────────────────────────────────────
     import openpyxl
     saved_path = os.path.abspath(file_path)
-    owb = openpyxl.load_workbook(file_path, keep_vba=True, keep_links=False)
+    # Only preserve VBA for macro-enabled workbooks (.xlsm/.xlam).
+    # Using keep_vba=True on a plain .xlsx causes openpyxl to embed a
+    # vbaProject.bin and write xlsm-style content types, which makes Excel
+    # reject the file as having an invalid format/extension mismatch.
+    is_macro_enabled = os.path.splitext(file_path)[1].lower() in (".xlsm", ".xlam")
+    owb = openpyxl.load_workbook(file_path, keep_vba=is_macro_enabled, keep_links=False)
     try:
         for change in changes:
             _dispatch_openpyxl(owb, change)
