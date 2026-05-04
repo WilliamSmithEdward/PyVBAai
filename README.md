@@ -1,6 +1,6 @@
 # PyVBAai
 
-**Chat naturally with your Excel workbooks — powered by OpenAI GPT.**
+**Chat naturally with your Excel workbooks. Currently supports OpenAI API integration.**
 
 PyVBAai is a Windows desktop application that lets you load any `.xlsx` /
 `.xlsm` file, send natural-language requests to an AI, and have it safely
