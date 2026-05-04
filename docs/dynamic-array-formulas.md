@@ -27,9 +27,9 @@ formula was written with spill intent."
 Excel ≥ 2013 functions must be stored in OOXML as `_xlfn.FUNCNAME(...)`.
 Without the prefix Excel cannot resolve the name and shows `#NAME?`.
 
-Implemented by `_add_xlfn_prefix()` in
-[core/excel_writer.py](../core/excel_writer.py) — runs in `_set_cell` before
-the formula reaches openpyxl. Examples:
+`_add_xlfn_prefix()` in [core/excel_writer.py](../core/excel_writer.py)
+handles this — it runs inside `_set_cell` before the formula reaches
+openpyxl. Examples:
 
 | Written by user / LLM       | Stored in XML                       |
 |-----------------------------|-------------------------------------|
@@ -37,6 +37,20 @@ the formula reaches openpyxl. Examples:
 | `=FILTER(A2:C8,B2:B8>0)`    | `=_xlfn.FILTER(A2:C8,B2:B8>0)`      |
 | `=IFERROR(XLOOKUP(...),0)`  | `=IFERROR(_xlfn.XLOOKUP(...),0)`    |
 | `=SUM(A1:A10)`              | `=SUM(A1:A10)` (unchanged)          |
+
+#### 1a. Spilled-range operator `A1#` → `_xlfn.ANCHORARRAY(A1)`
+
+The `#` (spill) operator is formula-bar syntax only. Storing it verbatim in
+OOXML triggers "Removed Records: Formula" on the next open. It must be
+rewritten to its OOXML form:
+
+| Written by user / LLM                              | Stored in XML                                            |
+|----------------------------------------------------|----------------------------------------------------------|
+| `=XLOOKUP("Apple",O2#,D2:D7,"Not found")`          | `=_xlfn.XLOOKUP("Apple",_xlfn.ANCHORARRAY(O2),D2:D7,"Not found")` |
+| `=SUM(Sheet1!A1#)`                                  | `=SUM(_xlfn.ANCHORARRAY(Sheet1!A1))`                     |
+| `=SUM($A$1#)`                                       | `=SUM(_xlfn.ANCHORARRAY($A$1))`                          |
+
+`_add_xlfn_prefix()` handles both transformations in a single pass.
 
 ### 2. `xcalcf:calcFeatures` extension in `xl/workbook.xml`
 
@@ -118,8 +132,36 @@ dynamic arrays. Excel responds with
 *"Removed Records: Formula from /xl/worksheets/sheet1.xml part"*.
 
 Solution: drop `xl/calcChain.xml` from the saved zip. Excel regenerates a
-correct chain on next open. The relationship in `workbook.xml.rels` is
-left in place; Excel ignores the missing target without error.
+correct chain on next open.
+
+**Other causes of "Removed Records: Formula"**
+
+- Storing the `A1#` spill operator verbatim (see §1a above).
+- Storing a dynamic-array `<f>` element with `t="array"` but without the
+  matching `cm="1"` on the parent `<c>` (see §4 below).
+
+## Round-trip preservation pass
+
+When an existing dynamic-array formula is loaded by openpyxl and saved again,
+openpyxl preserves `<f t="array" ref="...">` but silently drops `cm="1"` from
+the parent `<c>`. The postprocessor therefore runs two stamping passes:
+
+1. **New formulas** (`_DA_NEW_RE`): cells whose `<f>` has no `t=` attribute —
+   these were written by `_set_cell` via openpyxl and need the full treatment.
+2. **Existing formulas** (`_DA_EXISTING_RE`): cells whose `<f t="array">`
+   survived the round-trip but whose `<c>` lost `cm="1"` — re-add it.
+
+## Known limitation: bare Excel-Table names in dynamic-array formulas
+
+Using the bare table name as an array argument — e.g.
+`=FILTER(DataTable, DataTable[Category]="Fruit", "No matches")` — is valid in
+Excel's formula bar but fails to resolve during OOXML load-time evaluation,
+leaving `#NAME?` until the user manually re-enters the formula. Always use a
+column-qualified or `[#Data]` structured reference instead:
+
+```
+=FILTER(DataTable[#Data], DataTable[Category]="Fruit", "No matches")
+```
 
 ## End-to-end flow in `core/excel_writer.py`
 
@@ -128,14 +170,20 @@ apply_changes(file_path, changes)
 ├─ load workbook
 ├─ for each change: dispatch to handler
 │   └─ _set_cell:  formula → _add_xlfn_prefix() → cell.value
+│       _add_xlfn_prefix() does two rewrites in a single pass:
+│         • FUNCNAME( → _xlfn.FUNCNAME(  (post-Excel-2010 functions)
+│         • A1#       → _xlfn.ANCHORARRAY(A1)  (spilled-range operator)
 ├─ workbook.calculation.fullCalcOnLoad = True
 ├─ workbook.save(tmp_path)
 └─ _postprocess_xlsx(tmp_path)        # single zip rewrite pass
     ├─ remove xl/calcChain.xml
     ├─ inject xcalcf:calcFeatures into xl/workbook.xml
-    ├─ add xl/metadata.xml + Content_Types entry + rels entry
+    ├─ add xl/metadata.xml + Content_Types entry + rels entry (if not already present)
     └─ for each xl/worksheets/sheet*.xml:
-        stamp cm="1" / t="array" ref="<anchor>" on every dynamic-array <c><f>
+        Pass 1 (_DA_NEW_RE):      stamp cm="1" / t="array" ref="<anchor>"
+                                  on new dynamic-array <c><f> pairs (no t= attr)
+        Pass 2 (_DA_EXISTING_RE): re-add cm="1" to existing <c> elements whose
+                                  <f t="array"> survived the round-trip but lost cm
 ```
 
 ## Functions recognised as dynamic arrays
