@@ -12,7 +12,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QFormLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -123,56 +122,26 @@ class SettingsDialog(QDialog):
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
 
-        # ── Core inclusions ──────────────────────────────────────────────────
-        core_box = QGroupBox("Include in context")
-        core_form = QVBoxLayout(core_box)
-        self._include_formulas = QCheckBox("Cell formulas")
-        self._include_vba      = QCheckBox("VBA code")
-        self._include_named    = QCheckBox("Named ranges")
-        core_form.addWidget(self._include_formulas)
-        core_form.addWidget(self._include_vba)
-        core_form.addWidget(self._include_named)
-        layout.addWidget(core_box)
+        form = QFormLayout()
 
-        # ── Cell format aspects ──────────────────────────────────────────────
-        fmt_box = QGroupBox("Cell format aspects (increases token usage)")
-        fmt_form = QVBoxLayout(fmt_box)
-        self._fmt_number   = QCheckBox("Number format  (e.g. #,##0.00)")
-        self._fmt_font     = QCheckBox("Font style  (bold / italic)")
-        self._fmt_fc       = QCheckBox("Font colour")
-        self._fmt_bg       = QCheckBox("Background colour")
-        self._fmt_align    = QCheckBox("Alignment & wrap")
-        for cb in (self._fmt_number, self._fmt_font, self._fmt_fc,
-                   self._fmt_bg, self._fmt_align):
-            fmt_form.addWidget(cb)
-        layout.addWidget(fmt_box)
+        self._include_formulas = QCheckBox("Include cell formulas in context")
+        self._include_vba = QCheckBox("Include VBA code in context")
+        self._include_named = QCheckBox("Include named ranges in context")
+        form.addRow(self._include_formulas)
+        form.addRow(self._include_vba)
+        form.addRow(self._include_named)
 
-        # ── Row limit ────────────────────────────────────────────────────────
-        rows_box = QGroupBox("Row limit per contiguous area")
-        rows_layout = QVBoxLayout(rows_box)
-        self._limit_rows_cb = QCheckBox("Limit rows per area")
-        rows_layout.addWidget(self._limit_rows_cb)
-        spin_row = QHBoxLayout()
-        spin_row.setContentsMargins(20, 0, 0, 0)
-        self._max_rows_spin = QSpinBox()
-        self._max_rows_spin.setRange(1, 100_000)
-        self._max_rows_spin.setValue(100)
-        self._max_rows_spin.setEnabled(False)
-        spin_row.addWidget(QLabel("Max rows:"))
-        spin_row.addWidget(self._max_rows_spin)
-        spin_row.addStretch()
-        rows_layout.addLayout(spin_row)
-        self._limit_rows_cb.toggled.connect(self._max_rows_spin.setEnabled)
-        layout.addWidget(rows_box)
+        layout.addLayout(form)
 
         note = QLabel(
-            "Per-sheet and per-module filtering is available via the "
-            "<b>Context Filter</b> button in the workbook explorer sidebar."
+            "Per-sheet and per-module context filtering is available "
+            "via the <b>Context Filter</b> button in the workbook explorer sidebar."
         )
         note.setWordWrap(True)
         note.setTextFormat(Qt.TextFormat.RichText)
         note.setStyleSheet("color: #6c7086; font-size: 12px;")
         layout.addWidget(note)
+
         layout.addStretch()
         return w
     def _build_backup_tab(self) -> QWidget:
@@ -227,15 +196,6 @@ class SettingsDialog(QDialog):
         self._include_formulas.setChecked(_qbool(s.value("context/include_formulas", True)))
         self._include_vba.setChecked(_qbool(s.value("context/include_vba", True)))
         self._include_named.setChecked(_qbool(s.value("context/include_named_ranges", True)))
-        self._fmt_number.setChecked(_qbool(s.value("context/fmt_number_format", False)))
-        self._fmt_font.setChecked(_qbool(s.value("context/fmt_font_style", False)))
-        self._fmt_fc.setChecked(_qbool(s.value("context/fmt_font_color", False)))
-        self._fmt_bg.setChecked(_qbool(s.value("context/fmt_bg_color", False)))
-        self._fmt_align.setChecked(_qbool(s.value("context/fmt_alignment", False)))
-        limit = _qbool(s.value("context/limit_rows_per_area", False))
-        self._limit_rows_cb.setChecked(limit)
-        self._max_rows_spin.setValue(int(s.value("context/max_rows_per_area", 100)))
-        self._max_rows_spin.setEnabled(limit)
 
         # Backups
         self._max_backups_spin.setValue(int(s.value("backups/max_keep", 20)))
@@ -248,13 +208,6 @@ class SettingsDialog(QDialog):
         s.setValue("context/include_formulas", self._include_formulas.isChecked())
         s.setValue("context/include_vba", self._include_vba.isChecked())
         s.setValue("context/include_named_ranges", self._include_named.isChecked())
-        s.setValue("context/fmt_number_format", self._fmt_number.isChecked())
-        s.setValue("context/fmt_font_style", self._fmt_font.isChecked())
-        s.setValue("context/fmt_font_color", self._fmt_fc.isChecked())
-        s.setValue("context/fmt_bg_color", self._fmt_bg.isChecked())
-        s.setValue("context/fmt_alignment", self._fmt_align.isChecked())
-        s.setValue("context/limit_rows_per_area", self._limit_rows_cb.isChecked())
-        s.setValue("context/max_rows_per_area", self._max_rows_spin.value())
 
         s.setValue("backups/max_keep", self._max_backups_spin.value())
         s.setValue("appearance/dark_mode", self._dark_mode.isChecked())
@@ -281,13 +234,6 @@ class SettingsDialog(QDialog):
             include_formulas=_qbool(s.value("context/include_formulas", True)),
             include_vba=_qbool(s.value("context/include_vba", True)),
             include_named_ranges=_qbool(s.value("context/include_named_ranges", True)),
-            include_number_format=_qbool(s.value("context/fmt_number_format", False)),
-            include_font_style=_qbool(s.value("context/fmt_font_style", False)),
-            include_font_color=_qbool(s.value("context/fmt_font_color", False)),
-            include_bg_color=_qbool(s.value("context/fmt_bg_color", False)),
-            include_alignment=_qbool(s.value("context/fmt_alignment", False)),
-            limit_rows_per_area=_qbool(s.value("context/limit_rows_per_area", False)),
-            max_rows_per_area=int(s.value("context/max_rows_per_area", 100)),
             excluded_sheets=excluded_sheets,
             excluded_vba_modules=excluded_vba,
             excluded_areas=excluded_areas,

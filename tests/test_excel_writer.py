@@ -1,357 +1,332 @@
 # Copyright (c) 2026 William E. Smith (williamsmithe@icloud.com). All rights reserved.
 # Proprietary and confidential. Unauthorized use, copying, or distribution
 # of this file, via any medium, is strictly prohibited. See LICENSE for details.
-"""Tests for core/excel_writer.py — COM calls mocked with MagicMock."""
+"""Tests for core/excel_writer.py.
+
+Non-VBA handlers use real openpyxl workbooks created in-memory.
+VBA-COM handlers use MagicMock to avoid requiring Excel.
+"""
 from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import openpyxl
 import pytest
 
 from core.excel_writer import (
     ApplyError,
     _add_named_range,
     _add_sheet,
-    _add_vba_module,
     _clear_range,
+    _com_add_vba_module,
+    _com_delete_vba_module,
+    _com_get_vba_component,
+    _com_set_vba,
     _copy_sheet,
     _delete_named_range,
     _delete_sheet,
-    _delete_vba_module,
-    _dispatch,
-    _get_sheet,
-    _get_vba_component,
+    _dispatch_openpyxl,
+    _get_openpyxl_sheet,
+    _merge_cells,
     _move_sheet,
     _rename_sheet,
     _set_cell,
     _set_range,
-    _set_vba,
+    _unmerge_cells,
 )
 from models.conversation import Change
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
 @pytest.fixture()
-def wb():
-    """A MagicMock representing an Excel Workbook COM object."""
-    return MagicMock(name="Workbook")
+def owb():
+    """A real openpyxl Workbook with two sheets for testing."""
+    wb = openpyxl.Workbook()
+    wb.active.title = "Sheet1"
+    wb.create_sheet("Sheet2")
+    return wb
 
 
-# ── _get_sheet ────────────────────────────────────────────────────────────────
+@pytest.fixture()
+def com_wb():
+    """A MagicMock representing an Excel Workbook COM object (VBA tests only)."""
+    return MagicMock(name="ComWorkbook")
 
-class TestGetSheet:
-    def test_returns_sheet(self, wb):
-        fake_sheet = MagicMock()
-        wb.Worksheets.return_value = fake_sheet
-        result = _get_sheet(wb, "Sheet1")
-        wb.Worksheets.assert_called_once_with("Sheet1")
-        assert result is fake_sheet
 
-    def test_raises_apply_error_on_failure(self, wb):
-        wb.Worksheets.side_effect = Exception("not found")
+# ── _get_openpyxl_sheet ───────────────────────────────────────────────────────
+
+class TestGetOpenpyxlSheet:
+    def test_returns_sheet(self, owb):
+        ws = _get_openpyxl_sheet(owb, "Sheet1")
+        assert ws.title == "Sheet1"
+
+    def test_raises_apply_error_on_missing(self, owb):
         with pytest.raises(ApplyError, match="Sheet not found"):
-            _get_sheet(wb, "Missing")
+            _get_openpyxl_sheet(owb, "Ghost")
 
 
-# ── _get_vba_component ────────────────────────────────────────────────────────
+# ── _com_get_vba_component ────────────────────────────────────────────────────
 
-class TestGetVbaComponent:
-    def test_returns_component(self, wb):
+class TestComGetVbaComponent:
+    def test_returns_component(self, com_wb):
         fake_comp = MagicMock()
-        wb.VBProject.VBComponents.return_value = fake_comp
-        result = _get_vba_component(wb, "Module1")
+        com_wb.VBProject.VBComponents.return_value = fake_comp
+        result = _com_get_vba_component(com_wb, "Module1")
         assert result is fake_comp
 
-    def test_raises_apply_error_on_failure(self, wb):
-        wb.VBProject.VBComponents.side_effect = Exception("access denied")
+    def test_raises_apply_error_on_failure(self, com_wb):
+        com_wb.VBProject.VBComponents.side_effect = Exception("access denied")
         with pytest.raises(ApplyError, match="VBA module 'Missing' not found"):
-            _get_vba_component(wb, "Missing")
+            _com_get_vba_component(com_wb, "Missing")
 
-    def test_error_includes_trust_hint(self, wb):
-        wb.VBProject.VBComponents.side_effect = Exception("x")
+    def test_error_includes_trust_hint(self, com_wb):
+        com_wb.VBProject.VBComponents.side_effect = Exception("x")
         with pytest.raises(ApplyError, match="Trust access"):
-            _get_vba_component(wb, "X")
+            _com_get_vba_component(com_wb, "X")
 
 
 # ── _set_cell ─────────────────────────────────────────────────────────────────
 
 class TestSetCell:
-    def test_sets_value(self, wb):
-        cell = MagicMock()
-        wb.Worksheets.return_value.Range.return_value = cell
-        _set_cell(wb, {"sheet": "Sheet1", "cell": "A1", "value": 42})
-        assert cell.Value == 42
+    def test_sets_value(self, owb):
+        _set_cell(owb, {"sheet": "Sheet1", "cell": "A1", "value": 42})
+        assert owb["Sheet1"]["A1"].value == 42
 
-    def test_sets_formula(self, wb):
-        cell = MagicMock()
-        wb.Worksheets.return_value.Range.return_value = cell
-        _set_cell(wb, {"sheet": "Sheet1", "cell": "B2", "formula": "=SUM(A:A)"})
-        assert cell.Formula == "=SUM(A:A)"
+    def test_sets_formula(self, owb):
+        _set_cell(owb, {"sheet": "Sheet1", "cell": "B2", "formula": "=SUM(A:A)"})
+        assert owb["Sheet1"]["B2"].value == "=SUM(A:A)"
 
-    def test_formula_takes_priority_over_value(self, wb):
-        cell = MagicMock()
-        wb.Worksheets.return_value.Range.return_value = cell
-        _set_cell(wb, {"sheet": "Sheet1", "cell": "A1", "formula": "=1+1", "value": 99})
-        assert cell.Formula == "=1+1"
-        # Value should not be set when formula is present
-        assert not hasattr(cell, '_value_set') or cell.Value != 99
+    def test_formula_takes_priority(self, owb):
+        _set_cell(owb, {"sheet": "Sheet1", "cell": "A1", "formula": "=1+1", "value": 99})
+        assert owb["Sheet1"]["A1"].value == "=1+1"
 
-    def test_raises_for_unknown_sheet(self, wb):
-        wb.Worksheets.side_effect = Exception("no such sheet")
+    def test_raises_for_unknown_sheet(self, owb):
         with pytest.raises(ApplyError):
-            _set_cell(wb, {"sheet": "Ghost", "cell": "A1", "value": 1})
+            _set_cell(owb, {"sheet": "Ghost", "cell": "A1", "value": 1})
 
 
 # ── _set_range ────────────────────────────────────────────────────────────────
 
 class TestSetRange:
-    def test_sets_values_as_tuple_of_tuples(self, wb):
-        rng = MagicMock()
-        wb.Worksheets.return_value.Range.return_value = rng
-        values = [[1, 2, 3], [4, 5, 6]]
-        _set_range(wb, {"sheet": "Sheet1", "range": "A1:C2", "values": values})
-        assert rng.Value == ((1, 2, 3), (4, 5, 6))
+    def test_sets_values(self, owb):
+        _set_range(owb, {"sheet": "Sheet1", "range": "A1:C2",
+                         "values": [[1, 2, 3], [4, 5, 6]]})
+        ws = owb["Sheet1"]
+        assert ws["A1"].value == 1
+        assert ws["B2"].value == 5
+        assert ws["C2"].value == 6
 
-    def test_single_row(self, wb):
-        rng = MagicMock()
-        wb.Worksheets.return_value.Range.return_value = rng
-        _set_range(wb, {"sheet": "Sheet1", "range": "A1:C1", "values": [["a", "b", "c"]]})
-        assert rng.Value == (("a", "b", "c"),)
+    def test_single_row(self, owb):
+        _set_range(owb, {"sheet": "Sheet1", "range": "A1:C1",
+                         "values": [["a", "b", "c"]]})
+        ws = owb["Sheet1"]
+        assert ws["A1"].value == "a"
+        assert ws["C1"].value == "c"
 
 
 # ── _clear_range ──────────────────────────────────────────────────────────────
 
 class TestClearRange:
-    def test_calls_clear_contents(self, wb):
-        rng = MagicMock()
-        wb.Worksheets.return_value.Range.return_value = rng
-        _clear_range(wb, {"sheet": "Sheet1", "range": "A1:Z100"})
-        rng.ClearContents.assert_called_once()
+    def test_clears_values(self, owb):
+        ws = owb["Sheet1"]
+        ws["A1"].value = 100
+        ws["B2"].value = "hello"
+        _clear_range(owb, {"sheet": "Sheet1", "range": "A1:B2"})
+        assert ws["A1"].value is None
+        assert ws["B2"].value is None
 
 
 # ── _add_sheet ────────────────────────────────────────────────────────────────
 
 class TestAddSheet:
-    def test_add_at_position_1(self, wb):
-        wb.Worksheets.Count = 2
-        before_sheet = MagicMock()
-        new_sheet = MagicMock()
-        wb.Worksheets.Add.return_value = new_sheet
-        wb.Worksheets.side_effect = lambda x: before_sheet if x == 1 else MagicMock()
-        _add_sheet(wb, {"name": "NewSheet", "position": 1})
-        wb.Worksheets.Add.assert_called_once_with(Before=before_sheet)
-        assert new_sheet.Name == "NewSheet"
+    def test_add_new_sheet(self, owb):
+        _add_sheet(owb, {"name": "NewSheet"})
+        assert "NewSheet" in owb.sheetnames
 
-    def test_add_at_end(self, wb):
-        wb.Worksheets.Count = 2
-        last_sheet = MagicMock()
-        wb.Worksheets.side_effect = lambda x: last_sheet
-        _add_sheet(wb, {"name": "Last", "position": 99})
-        wb.Worksheets.Add.assert_called_once_with(After=last_sheet)
+    def test_add_at_position_1(self, owb):
+        _add_sheet(owb, {"name": "First", "position": 1})
+        assert owb.sheetnames[0] == "First"
 
-    def test_default_position_appends(self, wb):
-        wb.Worksheets.Count = 1
-        last_sheet = MagicMock()
-        wb.Worksheets.side_effect = lambda x: last_sheet
-        _add_sheet(wb, {"name": "Appended"})
-        # position defaults to Count+1 = 2, which is > Count=1 → After
-        wb.Worksheets.Add.assert_called_once_with(After=last_sheet)
+    def test_default_appends(self, owb):
+        count_before = len(owb.sheetnames)
+        _add_sheet(owb, {"name": "Last"})
+        assert owb.sheetnames[-1] == "Last"
+        assert len(owb.sheetnames) == count_before + 1
 
 
 # ── _delete_sheet ─────────────────────────────────────────────────────────────
 
 class TestDeleteSheet:
-    def test_calls_delete(self, wb):
-        sheet = MagicMock()
-        wb.Worksheets.return_value = sheet
-        _delete_sheet(wb, {"name": "Sheet1"})
-        sheet.Delete.assert_called_once()
+    def test_deletes_sheet(self, owb):
+        _delete_sheet(owb, {"name": "Sheet2"})
+        assert "Sheet2" not in owb.sheetnames
 
-    def test_raises_for_missing_sheet(self, wb):
-        wb.Worksheets.side_effect = Exception("not found")
+    def test_raises_for_missing_sheet(self, owb):
         with pytest.raises(ApplyError):
-            _delete_sheet(wb, {"name": "Ghost"})
+            _delete_sheet(owb, {"name": "Ghost"})
 
 
 # ── _rename_sheet ─────────────────────────────────────────────────────────────
 
 class TestRenameSheet:
-    def test_sets_name(self, wb):
-        sheet = MagicMock()
-        wb.Worksheets.return_value = sheet
-        _rename_sheet(wb, {"old_name": "OldName", "new_name": "NewName"})
-        assert sheet.Name == "NewName"
+    def test_renames(self, owb):
+        _rename_sheet(owb, {"old_name": "Sheet1", "new_name": "Renamed"})
+        assert "Renamed" in owb.sheetnames
+        assert "Sheet1" not in owb.sheetnames
 
 
 # ── _move_sheet ───────────────────────────────────────────────────────────────
 
 class TestMoveSheet:
-    def test_move_before(self, wb):
-        sheet = MagicMock()
-        target = MagicMock()
-        # First call returns the sheet to move; subsequent calls return target sheets
-        wb.Worksheets.Count = 3
-        call_count = [0]
-        def side(x):
-            call_count[0] += 1
-            if call_count[0] == 1:
-                return sheet
-            return target
-        wb.Worksheets.side_effect = side
-        _move_sheet(wb, {"name": "Sheet1", "position": 2})
-        sheet.Move.assert_called_once_with(Before=target)
+    def test_move_to_position_1(self, owb):
+        # owb starts: [Sheet1, Sheet2]
+        _move_sheet(owb, {"name": "Sheet2", "position": 1})
+        assert owb.sheetnames[0] == "Sheet2"
 
-    def test_clamps_position_to_1(self, wb):
-        sheet = MagicMock()
-        target = MagicMock()
-        wb.Worksheets.Count = 3
-        call_count = [0]
-        def side(x):
-            call_count[0] += 1
-            return sheet if call_count[0] == 1 else target
-        wb.Worksheets.side_effect = side
-        _move_sheet(wb, {"name": "Sheet1", "position": -99})
-        sheet.Move.assert_called_once()
+    def test_move_to_end(self, owb):
+        owb.create_sheet("Sheet3")
+        _move_sheet(owb, {"name": "Sheet1", "position": 3})
+        assert owb.sheetnames[-1] == "Sheet1"
 
 
 # ── _copy_sheet ───────────────────────────────────────────────────────────────
 
 class TestCopySheet:
-    def test_copies_and_renames(self, wb):
-        source = MagicMock()
-        wb.Worksheets.Count = 2
-        call_count = [0]
-        def side(x):
-            call_count[0] += 1
-            return source
-        wb.Worksheets.side_effect = side
-        _copy_sheet(wb, {"source": "Sheet1", "dest": "Sheet1_Copy", "position": 1})
-        source.Copy.assert_called_once()
-        assert wb.ActiveSheet.Name == "Sheet1_Copy"
+    def test_copies_sheet(self, owb):
+        owb["Sheet1"]["A1"].value = "orig"
+        _copy_sheet(owb, {"source": "Sheet1", "dest": "CopyOfSheet1", "position": 3})
+        assert "CopyOfSheet1" in owb.sheetnames
+
+    def test_raises_for_missing_source(self, owb):
+        with pytest.raises(ApplyError):
+            _copy_sheet(owb, {"source": "Ghost", "dest": "Copy"})
 
 
-# ── _set_vba ──────────────────────────────────────────────────────────────────
+# ── _merge_cells / _unmerge_cells ─────────────────────────────────────────────
 
-class TestSetVba:
-    def test_replaces_existing_code(self, wb):
+class TestMergeCells:
+    def test_merge(self, owb):
+        _merge_cells(owb, {"sheet": "Sheet1", "range": "A1:B2"})
+        assert "A1:B2" in [str(m) for m in owb["Sheet1"].merged_cells.ranges]
+
+    def test_unmerge(self, owb):
+        owb["Sheet1"].merge_cells("C1:D2")
+        _unmerge_cells(owb, {"sheet": "Sheet1", "range": "C1:D2"})
+        assert "C1:D2" not in [str(m) for m in owb["Sheet1"].merged_cells.ranges]
+
+
+# ── _add_named_range / _delete_named_range ────────────────────────────────────
+
+class TestNamedRange:
+    def test_add_named_range(self, owb):
+        _add_named_range(owb, {"name": "MyRange", "refers_to": "Sheet1!$A$1:$D$10"})
+        assert "MyRange" in owb.defined_names
+
+    def test_delete_named_range(self, owb):
+        from openpyxl.workbook.defined_name import DefinedName
+        owb.defined_names["ToDelete"] = DefinedName("ToDelete", attr_text="Sheet1!$A$1")
+        _delete_named_range(owb, {"name": "ToDelete"})
+        assert "ToDelete" not in owb.defined_names
+
+    def test_delete_missing_raises(self, owb):
+        with pytest.raises(ApplyError, match="Named range 'Ghost' not found"):
+            _delete_named_range(owb, {"name": "Ghost"})
+
+
+# ── _com_set_vba ──────────────────────────────────────────────────────────────
+
+class TestComSetVba:
+    def test_replaces_existing_code(self, com_wb):
         comp = MagicMock()
         code_module = MagicMock()
         code_module.CountOfLines = 5
         comp.CodeModule = code_module
-        wb.VBProject.VBComponents.return_value = comp
+        com_wb.VBProject.VBComponents.return_value = comp
 
-        _set_vba(wb, {"module": "Module1", "code": "Sub New()\nEnd Sub"})
+        _com_set_vba(com_wb, {"module": "Module1", "code": "Sub New()\nEnd Sub"})
         code_module.DeleteLines.assert_called_once_with(1, 5)
         code_module.InsertLines.assert_called_once_with(1, "Sub New()\nEnd Sub")
 
-    def test_empty_module_no_delete(self, wb):
+    def test_empty_module_no_delete(self, com_wb):
         comp = MagicMock()
         code_module = MagicMock()
         code_module.CountOfLines = 0
         comp.CodeModule = code_module
-        wb.VBProject.VBComponents.return_value = comp
+        com_wb.VBProject.VBComponents.return_value = comp
 
-        _set_vba(wb, {"module": "Module1", "code": "Sub X()\nEnd Sub"})
+        _com_set_vba(com_wb, {"module": "Module1", "code": "Sub X()\nEnd Sub"})
         code_module.DeleteLines.assert_not_called()
         code_module.InsertLines.assert_called_once()
 
-    def test_empty_code_no_insert(self, wb):
+    def test_empty_code_no_insert(self, com_wb):
         comp = MagicMock()
         code_module = MagicMock()
         code_module.CountOfLines = 3
         comp.CodeModule = code_module
-        wb.VBProject.VBComponents.return_value = comp
+        com_wb.VBProject.VBComponents.return_value = comp
 
-        _set_vba(wb, {"module": "Module1", "code": ""})
+        _com_set_vba(com_wb, {"module": "Module1", "code": ""})
         code_module.DeleteLines.assert_called_once()
         code_module.InsertLines.assert_not_called()
 
 
-# ── _add_vba_module ───────────────────────────────────────────────────────────
+# ── _com_add_vba_module ───────────────────────────────────────────────────────
 
-class TestAddVbaModule:
-    def test_adds_and_names_module(self, wb):
+class TestComAddVbaModule:
+    def test_adds_and_names_module(self, com_wb):
         new_comp = MagicMock()
-        wb.VBProject.VBComponents.Add.return_value = new_comp
-        _add_vba_module(wb, {"name": "NewMod", "code": "Sub Test()\nEnd Sub"})
-        wb.VBProject.VBComponents.Add.assert_called_once_with(1)
+        com_wb.VBProject.VBComponents.Add.return_value = new_comp
+        _com_add_vba_module(com_wb, {"name": "NewMod", "code": "Sub Test()\nEnd Sub"})
+        com_wb.VBProject.VBComponents.Add.assert_called_once_with(1)
         assert new_comp.Name == "NewMod"
         new_comp.CodeModule.InsertLines.assert_called_once_with(1, "Sub Test()\nEnd Sub")
 
-    def test_no_insert_when_no_code(self, wb):
+    def test_no_insert_when_no_code(self, com_wb):
         new_comp = MagicMock()
-        wb.VBProject.VBComponents.Add.return_value = new_comp
-        _add_vba_module(wb, {"name": "Empty", "code": ""})
+        com_wb.VBProject.VBComponents.Add.return_value = new_comp
+        _com_add_vba_module(com_wb, {"name": "Empty", "code": ""})
         new_comp.CodeModule.InsertLines.assert_not_called()
 
-    def test_raises_apply_error_on_com_failure(self, wb):
-        wb.VBProject.VBComponents.Add.side_effect = Exception("Trust Center blocked")
+    def test_raises_apply_error_on_com_failure(self, com_wb):
+        com_wb.VBProject.VBComponents.Add.side_effect = Exception("Trust Center blocked")
         with pytest.raises(ApplyError, match="Cannot add VBA module"):
-            _add_vba_module(wb, {"name": "X", "code": ""})
+            _com_add_vba_module(com_wb, {"name": "X", "code": ""})
 
 
-# ── _delete_vba_module ────────────────────────────────────────────────────────
+# ── _com_delete_vba_module ────────────────────────────────────────────────────
 
-class TestDeleteVbaModule:
-    def test_removes_component(self, wb):
+class TestComDeleteVbaModule:
+    def test_removes_component(self, com_wb):
         comp = MagicMock()
-        wb.VBProject.VBComponents.return_value = comp
-        _delete_vba_module(wb, {"name": "Module1"})
-        wb.VBProject.VBComponents.Remove.assert_called_once_with(comp)
+        com_wb.VBProject.VBComponents.return_value = comp
+        _com_delete_vba_module(com_wb, {"name": "Module1"})
+        com_wb.VBProject.VBComponents.Remove.assert_called_once_with(comp)
 
-    def test_raises_when_not_found(self, wb):
-        wb.VBProject.VBComponents.side_effect = Exception("not found")
+    def test_raises_when_not_found(self, com_wb):
+        com_wb.VBProject.VBComponents.side_effect = Exception("not found")
         with pytest.raises(ApplyError):
-            _delete_vba_module(wb, {"name": "Ghost"})
+            _com_delete_vba_module(com_wb, {"name": "Ghost"})
 
 
-# ── _add_named_range ──────────────────────────────────────────────────────────
+# ── _dispatch_openpyxl ────────────────────────────────────────────────────────
 
-class TestAddNamedRange:
-    def test_calls_names_add(self, wb):
-        _add_named_range(wb, {"name": "MyRange", "refers_to": "=Sheet1!$A$1:$D$10"})
-        wb.Names.Add.assert_called_once_with(Name="MyRange", RefersTo="=Sheet1!$A$1:$D$10")
-
-
-# ── _delete_named_range ───────────────────────────────────────────────────────
-
-class TestDeleteNamedRange:
-    def test_calls_delete(self, wb):
-        nr = MagicMock()
-        wb.Names.return_value = nr
-        _delete_named_range(wb, {"name": "MyRange"})
-        nr.Delete.assert_called_once()
-
-    def test_raises_apply_error_when_not_found(self, wb):
-        wb.Names.side_effect = Exception("not found")
-        with pytest.raises(ApplyError, match="Named range 'Ghost' not found"):
-            _delete_named_range(wb, {"name": "Ghost"})
-
-
-# ── _dispatch ─────────────────────────────────────────────────────────────────
-
-class TestDispatch:
-    def test_unknown_type_raises(self, wb):
+class TestDispatchOpenpyxl:
+    def test_unknown_type_raises(self, owb):
         change = Change(type="do_magic", params={})
         with pytest.raises(ApplyError, match="Unknown change type: 'do_magic'"):
-            _dispatch(wb, change)
+            _dispatch_openpyxl(owb, change)
 
     @pytest.mark.parametrize("op_type,params", [
-        ("set_cell",          {"sheet": "S", "cell": "A1", "value": 1}),
-        ("set_range",         {"sheet": "S", "range": "A1:B2", "values": [[1, 2]]}),
-        ("clear_range",       {"sheet": "S", "range": "A1:Z100"}),
-        ("delete_sheet",      {"name": "S"}),
-        ("rename_sheet",      {"old_name": "Old", "new_name": "New"}),
-        ("add_named_range",   {"name": "NR", "refers_to": "=Sheet1!$A$1"}),
+        ("set_cell",          {"sheet": "Sheet1", "cell": "A1", "value": 1}),
+        ("set_range",         {"sheet": "Sheet1", "range": "A1:B2", "values": [[1, 2], [3, 4]]}),
+        ("clear_range",       {"sheet": "Sheet1", "range": "A1:Z100"}),
+        ("delete_sheet",      {"name": "Sheet2"}),
+        ("rename_sheet",      {"old_name": "Sheet1", "new_name": "Renamed"}),
     ])
-    def test_known_types_dispatched(self, wb, op_type, params):
-        """Known operation types should not raise ApplyError for the dispatch itself."""
+    def test_known_types_dispatched(self, owb, op_type, params):
+        """Known types should dispatch (may mutate owb) without 'Unknown change type'."""
         change = Change(type=op_type, params=params)
-        # The underlying handler will fail (mock wb), but it should not be
-        # an "Unknown change type" error — it may raise ApplyError for other reasons.
         try:
-            _dispatch(wb, change)
+            _dispatch_openpyxl(owb, change)
         except ApplyError as exc:
             assert "Unknown change type" not in str(exc)
-        except Exception:
-            pass  # COM errors from the mock are acceptable
