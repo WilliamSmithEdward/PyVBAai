@@ -18,6 +18,9 @@ _VBA_MODULE = 1
 _VBA_CLASS = 2
 _VBA_FORM = 3
 
+# Built once at import time — avoids a dict allocation on every _dispatch call
+_HANDLERS: dict = {}  # populated after function definitions below
+
 
 class ApplyError(Exception):
     """Raised when a change operation fails."""
@@ -62,6 +65,11 @@ def apply_changes(file_path: str, changes: list[Change]) -> None:
 
         excel.DisplayAlerts = False
         excel.ScreenUpdating = False
+        excel.EnableEvents = False
+        try:
+            excel.Calculation = -4135  # xlCalculationManual — no recalc between writes
+        except Exception:  # noqa: BLE001
+            pass
 
         for change in changes:
             _dispatch(wb, change)
@@ -74,6 +82,14 @@ def apply_changes(file_path: str, changes: list[Change]) -> None:
     except Exception as exc:
         raise ApplyError(f"COM error: {exc}") from exc
     finally:
+        try:
+            excel.EnableEvents = True
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            excel.Calculation = -4105  # xlCalculationAutomatic
+        except Exception:  # noqa: BLE001
+            pass
         excel.DisplayAlerts = True
         excel.ScreenUpdating = True
         try:
@@ -93,28 +109,10 @@ def apply_changes(file_path: str, changes: list[Change]) -> None:
 
 def _dispatch(wb: Any, change: Change) -> None:
     op = change.type
-    p = change.params
-
-    handlers = {
-        "set_cell":          _set_cell,
-        "set_range":         _set_range,
-        "clear_range":       _clear_range,
-        "add_sheet":         _add_sheet,
-        "delete_sheet":      _delete_sheet,
-        "rename_sheet":      _rename_sheet,
-        "move_sheet":        _move_sheet,
-        "copy_sheet":        _copy_sheet,
-        "set_vba":           _set_vba,
-        "add_vba_module":    _add_vba_module,
-        "delete_vba_module": _delete_vba_module,
-        "add_named_range":   _add_named_range,
-        "delete_named_range":_delete_named_range,
-    }
-
-    handler = handlers.get(op)
+    handler = _HANDLERS.get(op)
     if handler is None:
         raise ApplyError(f"Unknown change type: '{op}'")
-    handler(wb, p)
+    handler(wb, change.params)
 
 
 # ── sheet helpers ─────────────────────────────────────────────────────────────
@@ -161,14 +159,11 @@ def _add_sheet(wb: Any, p: dict) -> None:
     position = max(1, min(position, wb.Worksheets.Count + 1))
 
     if position <= wb.Worksheets.Count:
-        before_sheet = wb.Worksheets(position)
-        wb.Worksheets.Add(Before=before_sheet)
+        new_sheet = wb.Worksheets.Add(Before=wb.Worksheets(position))
     else:
-        after_sheet = wb.Worksheets(wb.Worksheets.Count)
-        wb.Worksheets.Add(After=after_sheet)
+        new_sheet = wb.Worksheets.Add(After=wb.Worksheets(wb.Worksheets.Count))
 
-    # The newly added sheet becomes ActiveSheet
-    wb.ActiveSheet.Name = name
+    new_sheet.Name = name
 
 
 def _delete_sheet(wb: Any, p: dict) -> None:
@@ -199,6 +194,7 @@ def _copy_sheet(wb: Any, p: dict) -> None:
         source.Copy(Before=wb.Worksheets(position))
     else:
         source.Copy(After=wb.Worksheets(wb.Worksheets.Count))
+    # Copy() doesn't return the new sheet in win32com; ActiveSheet is the copy
     wb.ActiveSheet.Name = p["dest"]
 
 
@@ -254,3 +250,21 @@ def _delete_named_range(wb: Any, p: dict) -> None:
         wb.Names(p["name"]).Delete()
     except Exception as exc:
         raise ApplyError(f"Named range '{p['name']}' not found.") from exc
+
+
+# Populated here so all handler functions are defined before assignment
+_HANDLERS.update({
+    "set_cell":           _set_cell,
+    "set_range":          _set_range,
+    "clear_range":        _clear_range,
+    "add_sheet":          _add_sheet,
+    "delete_sheet":       _delete_sheet,
+    "rename_sheet":       _rename_sheet,
+    "move_sheet":         _move_sheet,
+    "copy_sheet":         _copy_sheet,
+    "set_vba":            _set_vba,
+    "add_vba_module":     _add_vba_module,
+    "delete_vba_module":  _delete_vba_module,
+    "add_named_range":    _add_named_range,
+    "delete_named_range": _delete_named_range,
+})

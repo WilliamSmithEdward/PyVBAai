@@ -10,6 +10,7 @@ should CoInitialize in their run() method.
 from __future__ import annotations
 
 import os
+from functools import lru_cache
 
 from models.workbook import (
     CellData,
@@ -24,8 +25,9 @@ from models.workbook import (
 _MAX_COLS_HARD = 200
 
 
+@lru_cache(maxsize=512)
 def col_letter(col: int) -> str:
-    """1-based column index -> letter(s), e.g. 1->'A', 27->'AA'."""
+    """1-based column index -> letter(s), e.g. 1->'A', 27->'AA'. Cached."""
     result = ""
     while col > 0:
         col, rem = divmod(col - 1, 26)
@@ -35,6 +37,43 @@ def col_letter(col: int) -> str:
 
 def cell_address(row: int, col: int) -> str:
     return f"{col_letter(col)}{row}"
+
+
+def _abs_addr(row: int, col: int) -> str:
+    return f"${col_letter(col)}${row}"
+
+
+def _connected_area_addresses(cells: dict) -> list[str]:
+    """Return Excel-style absolute addresses for each connected block of non-empty cells.
+
+    Uses 4-connected flood-fill on the (row, col) coordinates present in `cells`.
+    Returns addresses sorted top-to-bottom, left-to-right by top-left corner.
+    """
+    occupied: set[tuple[int, int]] = {(cd.row, cd.col) for cd in cells.values()}
+    visited: set[tuple[int, int]] = set()
+    areas: list[str] = []
+
+    for seed in sorted(occupied):
+        if seed in visited:
+            continue
+        # BFS flood-fill
+        component: list[tuple[int, int]] = []
+        queue = [seed]
+        visited.add(seed)
+        while queue:
+            r, c = queue.pop()
+            component.append((r, c))
+            for nr, nc in ((r - 1, c), (r + 1, c), (r, c - 1), (r, c + 1)):
+                if (nr, nc) in occupied and (nr, nc) not in visited:
+                    visited.add((nr, nc))
+                    queue.append((nr, nc))
+        min_r = min(p[0] for p in component)
+        max_r = max(p[0] for p in component)
+        min_c = min(p[1] for p in component)
+        max_c = max(p[1] for p in component)
+        areas.append(f"{_abs_addr(min_r, min_c)}:{_abs_addr(max_r, max_c)}")
+
+    return areas
 
 
 def read_workbook(file_path: str, config: ContextConfig | None = None) -> WorkbookData:
@@ -63,6 +102,12 @@ def read_workbook(file_path: str, config: ContextConfig | None = None) -> Workbo
         excel = win32.Dispatch("Excel.Application")
         excel.Visible = False
         excel.DisplayAlerts = False
+        excel.ScreenUpdating = False
+        excel.EnableEvents = False
+        try:
+            excel.Calculation = -4135  # xlCalculationManual — skip recalc on open
+        except Exception:  # noqa: BLE001
+            pass  # Some Excel configurations don't allow changing this
 
         wb = excel.Workbooks.Open(
             file_path,
@@ -94,6 +139,8 @@ def read_workbook(file_path: str, config: ContextConfig | None = None) -> Workbo
                 used = sheet.UsedRange
                 row_count = used.Rows.Count
                 col_count = min(used.Columns.Count, _MAX_COLS_HARD)
+                start_row = used.Row
+                start_col = used.Column
 
                 sheet_data = SheetData(
                     index=i - 1,
@@ -104,48 +151,37 @@ def read_workbook(file_path: str, config: ContextConfig | None = None) -> Workbo
                     visible=visible,
                 )
 
-                # Iterate each area so non-contiguous ranges are fully read
-                # and cell addresses are correct regardless of where data starts.
-                for area in used.Areas:
-                    area_rows = area.Rows.Count
-                    area_cols = min(area.Columns.Count, _MAX_COLS_HARD)
-                    start_row = area.Row
-                    start_col = area.Column
+                # Read the whole used range in two COM calls (Value + Formula).
+                # UsedRange is always a single bounding-box rectangle, so
+                # iterating .Areas is unnecessary overhead.
+                raw_values = used.Value
+                raw_formulas = used.Formula if config.include_formulas else None
 
-                    if area_rows == 0 or area_cols == 0:
-                        continue
+                values_2d = _normalise_range(raw_values, row_count)
+                formulas_2d = (
+                    _normalise_range(raw_formulas, row_count)
+                    if raw_formulas is not None
+                    else None
+                )
 
-                    rng = sheet.Range(
-                        sheet.Cells(start_row, start_col),
-                        sheet.Cells(start_row + area_rows - 1, start_col + area_cols - 1),
-                    )
-                    raw_values = rng.Value
-                    raw_formulas = rng.Formula if config.include_formulas else None
-
-                    values_2d = _normalise_range(raw_values, area_rows, area_cols)
-                    formulas_2d = (
-                        _normalise_range(raw_formulas, area_rows, area_cols)
-                        if raw_formulas is not None
-                        else None
-                    )
-
-                    for r_idx, row in enumerate(values_2d):
-                        for c_idx, val in enumerate(row):
-                            if val is None or val == "":
-                                continue
-                            r = start_row + r_idx
-                            c = start_col + c_idx
-                            addr = cell_address(r, c)
-                            formula = ""
-                            if formulas_2d:
-                                f = formulas_2d[r_idx][c_idx]
-                                if isinstance(f, str) and f.startswith("="):
-                                    formula = f
-                            sheet_data.cells[addr] = CellData(
-                                row=r, col=c, address=addr, value=val, formula=formula,
-                            )
+                for r_idx, row in enumerate(values_2d):
+                    for c_idx, val in enumerate(row[:col_count]):
+                        if val is None or val == "":
+                            continue
+                        r = start_row + r_idx
+                        c = start_col + c_idx
+                        addr = cell_address(r, c)
+                        formula = ""
+                        if formulas_2d:
+                            f = formulas_2d[r_idx][c_idx]
+                            if isinstance(f, str) and f.startswith("="):
+                                formula = f
+                        sheet_data.cells[addr] = CellData(
+                            row=r, col=c, address=addr, value=val, formula=formula,
+                        )
 
                 wb_data.sheets.append(sheet_data)
+                sheet_data.area_addresses = _connected_area_addresses(sheet_data.cells)
 
             except Exception:  # noqa: BLE001
                 # Still add a placeholder so the sheet appears in the tree
@@ -226,23 +262,20 @@ def read_workbook(file_path: str, config: ContextConfig | None = None) -> Workbo
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
-def _normalise_range(raw: object, rows: int, cols: int) -> list[list]:
+def _normalise_range(raw: object, rows: int) -> list[list]:
     """
     COM returns different types depending on range shape:
       single cell  -> scalar
       single row   -> tuple of scalars
       single col   -> tuple of scalars
       multi-cell   -> tuple of tuples
-    Normalise to list[list].
+    Normalise to list[list] using only row count to disambiguate.
     """
-    if rows == 1 and cols == 1:
-        return [[raw]]
     if rows == 1:
-        # raw is a flat tuple
-        return [list(raw)]
-    if cols == 1:
-        # raw is a tuple of single-element tuples
-        if isinstance(raw, (list, tuple)) and raw and isinstance(raw[0], (list, tuple)):
-            return [list(r) for r in raw]
-        return [[v] for v in raw]
-    return [list(r) for r in raw]
+        if not isinstance(raw, (list, tuple)):
+            return [[raw]]  # 1x1 scalar
+        return [list(raw)]  # 1xN row
+    # rows > 1
+    if isinstance(raw, (list, tuple)) and raw and isinstance(raw[0], (list, tuple)):
+        return [list(r) for r in raw]  # MxN
+    return [[v] for v in raw]  # Mx1 single column

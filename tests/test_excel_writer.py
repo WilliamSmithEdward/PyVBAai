@@ -135,10 +135,12 @@ class TestAddSheet:
     def test_add_at_position_1(self, wb):
         wb.Worksheets.Count = 2
         before_sheet = MagicMock()
+        new_sheet = MagicMock()
+        wb.Worksheets.Add.return_value = new_sheet
         wb.Worksheets.side_effect = lambda x: before_sheet if x == 1 else MagicMock()
         _add_sheet(wb, {"name": "NewSheet", "position": 1})
         wb.Worksheets.Add.assert_called_once_with(Before=before_sheet)
-        assert wb.ActiveSheet.Name == "NewSheet"
+        assert new_sheet.Name == "NewSheet"
 
     def test_add_at_end(self, wb):
         wb.Worksheets.Count = 2

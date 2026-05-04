@@ -134,6 +134,7 @@ class TestAIClient:
     def test_available_models_returns_list(self, monkeypatch):
         """fetch_models_from_api should return a sorted list when the API responds."""
         import json
+
         import core.ai_client as ai_mod
 
         fake_payload = json.dumps({
@@ -163,6 +164,7 @@ class TestAIClient:
 
     def test_available_models_contains_gpt5(self, monkeypatch):
         import json
+
         import core.ai_client as ai_mod
 
         fake_payload = json.dumps({
@@ -186,6 +188,7 @@ class TestAIClient:
 
     def test_available_models_contains_gpt5_mini(self, monkeypatch):
         import json
+
         import core.ai_client as ai_mod
 
         fake_payload = json.dumps({
@@ -215,6 +218,7 @@ class TestAIClient:
 
     def test_available_models_returns_empty_on_network_error(self, monkeypatch):
         import urllib.error
+
         import core.ai_client as ai_mod
         monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
         monkeypatch.setattr(
@@ -227,6 +231,7 @@ class TestAIClient:
     def test_available_models_filters_non_gpt(self, monkeypatch):
         """Non-gpt- prefixed models and older GPT versions should be excluded."""
         import json
+
         import core.ai_client as ai_mod
 
         fake_payload = json.dumps({
@@ -252,6 +257,7 @@ class TestAIClient:
     def test_available_models_allowlist_filter(self, monkeypatch):
         """Only gpt-5+ base and -mini variants should survive the filter."""
         import json
+
         import core.ai_client as ai_mod
 
         fake_payload = json.dumps({
@@ -289,6 +295,7 @@ class TestAIClient:
     def test_available_models_caches_result(self, monkeypatch):
         """Second call should return cached result without hitting the network."""
         import json
+
         import core.ai_client as ai_mod
 
         call_count = [0]

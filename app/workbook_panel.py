@@ -160,9 +160,10 @@ class WorkbookPanel(QWidget):
                 | Qt.ItemFlag.ItemIsAutoTristate
             )
 
-            # Show each used area as a checkable child item.
-            # UsedRange may have multiple areas for non-contiguous data.
-            areas = [a.strip() for a in sheet.used_range_address.split(",") if a.strip()]
+            # Show each connected data block as a checkable child item.
+            areas = sheet.area_addresses or (
+                [sheet.used_range_address] if sheet.used_range_address else []
+            )
             for area_addr in areas:
                 area_excluded = (
                     sheet.name in excluded_sheets

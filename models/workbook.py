@@ -26,6 +26,7 @@ class SheetData:
     col_count: int
     cells: dict[str, CellData] = field(default_factory=dict)
     visible: bool = True
+    area_addresses: list[str] = field(default_factory=list)
 
 
 @dataclass
