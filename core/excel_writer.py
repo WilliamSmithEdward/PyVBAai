@@ -120,26 +120,46 @@ _DA_REL_TYPE = (
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/sheetMetadata"
 )
 
-# Matches a <c> tag (without cm=) that is directly followed by an <f> tag
-# (without t=) containing a dynamic-array function so we can stamp:
-#   - cm="1" on the <c> element (XLDAPR cell-metadata reference)
-#   - t="array" ref="<anchor>" on the <f> element
-# The ref attribute is required by Excel; we set it to the single anchor cell
-# and rely on fullCalcOnLoad="1" to make Excel resize the spill range on open.
-_DA_CELL_RE = re.compile(
+# Dynamic-array function names that need the cm="1" + t="array" treatment.
+_DA_FUNC_RE = (
+    r"_xlfn\.(?:FILTER|UNIQUE|SORT(?:BY)?|SEQUENCE|RANDARRAY"
+    r"|XLOOKUP|XMATCH|LET|LAMBDA|MAP|REDUCE|SCAN|MAKEARRAY|BYROW|BYCOL)"
+)
+
+# Pass 1 - new dynamic-array formulas written by openpyxl as plain <f>:
+# <c r="A1"><f>_xlfn.FILTER(...)</f> -> stamp cm="1" + t="array" ref="A1".
+# We use the single anchor cell as ref and rely on fullCalcOnLoad="1" to make
+# Excel resize the spill range on open.
+_DA_NEW_RE = re.compile(
     r'(<c\b(?![^>]*\bcm=)[^>]*\br="([A-Z]+\d+)"[^>]*>)'
     r"(<f\b(?![^>]*\bt=)[^>]*>)"
-    r"(_xlfn\.(?:FILTER|UNIQUE|SORT(?:BY)?|SEQUENCE|RANDARRAY"
-    r"|XLOOKUP|XMATCH|LET|LAMBDA|MAP|REDUCE|SCAN|MAKEARRAY|BYROW|BYCOL))",
+    r"(" + _DA_FUNC_RE + r")",
+    re.IGNORECASE,
+)
+
+# Pass 2 - existing dynamic-array formulas re-saved by openpyxl: openpyxl
+# preserves <f t="array" ref="..."> but drops cm="1" on the <c> element AND
+# drops xl/metadata.xml. The postprocessor restores the metadata part; this
+# regex re-adds cm="1" to the anchor cell so Excel keeps treating it as a
+# dynamic array instead of converting it back to a legacy CSE array.
+_DA_EXISTING_RE = re.compile(
+    r'(<c\b(?![^>]*\bcm=)[^>]*>)'
+    r'(<f\b[^>]*\bt="array"[^>]*>)'
+    r"(" + _DA_FUNC_RE + r")",
     re.IGNORECASE,
 )
 
 
-def _da_cell_sub(m: re.Match) -> str:  # type: ignore[type-arg]
+def _da_new_sub(m: re.Match) -> str:  # type: ignore[type-arg]
     c_open = m.group(1)[:-1]   # strip trailing >
     anchor = m.group(2)
     f_open = m.group(3)[:-1]   # strip trailing >
     return f'{c_open} cm="1">{f_open} t="array" ref="{anchor}">{m.group(4)}'
+
+
+def _da_existing_sub(m: re.Match) -> str:  # type: ignore[type-arg]
+    c_open = m.group(1)[:-1]   # strip trailing >
+    return f'{c_open} cm="1">{m.group(2)}{m.group(3)}'
 
 
 def _postprocess_xlsx(xlsx_path: str) -> None:
@@ -195,7 +215,8 @@ def _postprocess_xlsx(xlsx_path: str) -> None:
                 data = text.encode("utf-8")
 
             elif name.startswith("xl/worksheets/sheet") and name.endswith(".xml"):
-                text = _DA_CELL_RE.sub(_da_cell_sub, text)
+                text = _DA_NEW_RE.sub(_da_new_sub, text)
+                text = _DA_EXISTING_RE.sub(_da_existing_sub, text)
                 data = text.encode("utf-8")
 
             zout.writestr(name, data)
@@ -513,7 +534,38 @@ def _delete_named_range(owb: Any, p: dict) -> None:
 
 def _merge_cells(owb: Any, p: dict) -> None:
     ws = _get_openpyxl_sheet(owb, p["sheet"])
-    ws.merge_cells(p["range"])
+    new_range = p["range"]
+
+    # Overlapping merged ranges produce invalid OOXML and Excel will show a
+    # "Removed Records: Merged Cells" repair dialog on open. If the requested
+    # range overlaps any existing merge, unmerge those first so the new merge
+    # cleanly replaces them.
+    from openpyxl.utils import range_boundaries
+    new_bounds = range_boundaries(new_range)
+    if new_bounds is None:
+        ws.merge_cells(new_range)
+        return
+    n_min_col, n_min_row, n_max_col, n_max_row = new_bounds
+
+    overlapping: list[str] = []
+    for existing in list(ws.merged_cells.ranges):
+        e_str = str(existing)
+        if e_str == new_range:
+            return  # identical merge already exists; nothing to do
+        e_bounds = range_boundaries(e_str)
+        if e_bounds is None:
+            continue
+        e_min_col, e_min_row, e_max_col, e_max_row = e_bounds
+        if (
+            n_min_col <= e_max_col and n_max_col >= e_min_col
+            and n_min_row <= e_max_row and n_max_row >= e_min_row
+        ):
+            overlapping.append(e_str)
+
+    for r in overlapping:
+        ws.unmerge_cells(r)
+
+    ws.merge_cells(new_range)
 
 
 def _unmerge_cells(owb: Any, p: dict) -> None:

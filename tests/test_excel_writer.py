@@ -189,6 +189,40 @@ class TestMergeCells:
         _unmerge_cells(owb, {"sheet": "Sheet1", "range": "C1:D2"})
         assert "C1:D2" not in [str(m) for m in owb["Sheet1"].merged_cells.ranges]
 
+    def test_overlapping_merge_replaces_existing(self, owb):
+        # Excel rejects overlapping merged ranges with a "Removed Records:
+        # Merged Cells" repair dialog, so the second merge must unmerge any
+        # overlapping ranges first.
+        _merge_cells(owb, {"sheet": "Sheet1", "range": "A1:J1"})
+        _merge_cells(owb, {"sheet": "Sheet1", "range": "A1:Y1"})
+        ranges = [str(m) for m in owb["Sheet1"].merged_cells.ranges]
+        assert "A1:J1" not in ranges
+        assert "A1:Y1" in ranges
+
+    def test_overlapping_merge_replaces_multiple(self, owb):
+        # A new merge that covers two existing non-adjacent merges should
+        # replace both of them.
+        _merge_cells(owb, {"sheet": "Sheet1", "range": "A1:B2"})
+        _merge_cells(owb, {"sheet": "Sheet1", "range": "D1:E2"})
+        _merge_cells(owb, {"sheet": "Sheet1", "range": "A1:F3"})
+        ranges = [str(m) for m in owb["Sheet1"].merged_cells.ranges]
+        assert "A1:B2" not in ranges
+        assert "D1:E2" not in ranges
+        assert "A1:F3" in ranges
+
+    def test_non_overlapping_merge_preserved(self, owb):
+        _merge_cells(owb, {"sheet": "Sheet1", "range": "A1:B2"})
+        _merge_cells(owb, {"sheet": "Sheet1", "range": "D4:E5"})
+        ranges = [str(m) for m in owb["Sheet1"].merged_cells.ranges]
+        assert "A1:B2" in ranges
+        assert "D4:E5" in ranges
+
+    def test_identical_merge_is_noop(self, owb):
+        _merge_cells(owb, {"sheet": "Sheet1", "range": "A1:B2"})
+        _merge_cells(owb, {"sheet": "Sheet1", "range": "A1:B2"})
+        ranges = [str(m) for m in owb["Sheet1"].merged_cells.ranges]
+        assert ranges.count("A1:B2") == 1
+
 
 # ── _add_named_range / _delete_named_range ────────────────────────────────────
 
@@ -473,6 +507,91 @@ class TestDaFeaturesInjection:
         ws = data["xl/worksheets/sheet1.xml"]
         assert ws.count('cm="1"') == 1
         assert ws.count('t="array"') == 1
+
+    def test_existing_da_array_formula_gets_cm(self, tmp_path):
+        # Simulates what openpyxl emits when re-saving a workbook that
+        # already had a dynamic-array formula: <f t="array" ref="..."> is
+        # preserved but the cm="1" cell-metadata reference is dropped.
+        # The postprocessor must restore cm="1" so Excel keeps it as a
+        # dynamic array instead of converting it to a legacy CSE array.
+        sheet = (
+            '<worksheet><sheetData>'
+            '<row r="1"><c r="C1"><f t="array" ref="C1">_xlfn.UNIQUE(A1:A3)</f><v/></c></row>'
+            '</sheetData></worksheet>'
+        )
+        xlsx = self._make_zip(tmp_path, sheets={"sheet1.xml": sheet})
+        data = self._run(xlsx)
+        ws = data["xl/worksheets/sheet1.xml"]
+        assert 'cm="1"' in ws
+        # original t="array" ref="C1" must be preserved exactly once
+        assert ws.count('t="array"') == 1
+        assert 'ref="C1"' in ws
+
+    def test_existing_da_with_spill_range_preserved(self, tmp_path):
+        # Re-saved workbook with a multi-cell ref (e.g. C1:C3) must keep
+        # that ref untouched while still gaining cm="1".
+        sheet = (
+            '<worksheet><sheetData>'
+            '<row r="1"><c r="C1"><f t="array" ref="C1:C3">_xlfn.SORT(A1:A3)</f><v/></c></row>'
+            '</sheetData></worksheet>'
+        )
+        xlsx = self._make_zip(tmp_path, sheets={"sheet1.xml": sheet})
+        data = self._run(xlsx)
+        ws = data["xl/worksheets/sheet1.xml"]
+        assert 'cm="1"' in ws
+        assert 'ref="C1:C3"' in ws
+
+    def test_existing_legacy_cse_array_not_modified(self, tmp_path):
+        # A legacy (non-dynamic) array formula like {=SUM(A1:A3*B1:B3)} must
+        # NOT be promoted to a dynamic array -- only formulas containing one
+        # of the recognised _xlfn dynamic-array functions get cm="1".
+        sheet = (
+            '<worksheet><sheetData>'
+            '<row r="1"><c r="C1"><f t="array" ref="C1">SUM(A1:A3*B1:B3)</f><v/></c></row>'
+            '</sheetData></worksheet>'
+        )
+        xlsx = self._make_zip(tmp_path, sheets={"sheet1.xml": sheet})
+        data = self._run(xlsx)
+        ws = data["xl/worksheets/sheet1.xml"]
+        assert 'cm="1"' not in ws
+
+    def test_openpyxl_roundtrip_preserves_dynamic_array(self, tmp_path):
+        # End-to-end: build a workbook through our pipeline, then load and
+        # re-save it via plain openpyxl (simulating apply_changes with no
+        # changes touching the DA cell), and verify the resulting file still
+        # has cm="1" + t="array" + the metadata/features parts after a second
+        # _postprocess_xlsx pass.
+        import zipfile as zf
+
+        import openpyxl
+
+        from core.excel_writer import _postprocess_xlsx
+
+        # Initial save through the pipeline.
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws["A1"] = "x"
+        ws["A2"] = "y"
+        ws["A3"] = "x"
+        ws["C1"] = "=_xlfn.UNIQUE(A1:A3)"
+        first = tmp_path / "first.xlsx"
+        wb.save(str(first))
+        _postprocess_xlsx(str(first))
+
+        # Round-trip through openpyxl with NO changes, then postprocess again.
+        wb2 = openpyxl.load_workbook(str(first))
+        second = tmp_path / "second.xlsx"
+        wb2.save(str(second))
+        _postprocess_xlsx(str(second))
+
+        with zf.ZipFile(second) as z:
+            ws_xml = z.read("xl/worksheets/sheet1.xml").decode()
+            assert "xl/metadata.xml" in z.namelist()
+            wb_xml = z.read("xl/workbook.xml").decode()
+
+        assert 'cm="1"' in ws_xml
+        assert 't="array"' in ws_xml
+        assert _DA_FEATURES_URI in wb_xml
 
 
 class TestCreateChart:

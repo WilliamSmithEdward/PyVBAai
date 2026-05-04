@@ -150,6 +150,26 @@ Pivot tables and pivot charts cannot be created directly — use a VBA macro (se
 Existing pivot tables on a sheet are listed in context as PIVOT TABLES: name1, name2.
 Existing pivot charts appear in the CHARTS list like regular charts.
 
+### Dynamic array (spilling) formulas
+Excel-365 functions such as FILTER, UNIQUE, SORT, SORTBY, SEQUENCE, RANDARRAY, XLOOKUP,
+XMATCH, LET, LAMBDA, MAP, REDUCE, SCAN, MAKEARRAY, BYROW, BYCOL automatically spill into
+neighbouring cells.  They are fully supported — write them like any other formula:
+{"type":"set_cell", "sheet":"Sheet1", "cell":"F2", "formula":"=FILTER(A2:D8,A2:A8=\\"Fruit\\",\\"No matches\\")"}
+{"type":"set_cell", "sheet":"Sheet1", "cell":"H2", "formula":"=UNIQUE(B2:B100)"}
+{"type":"set_cell", "sheet":"Sheet1", "cell":"J2", "formula":"=SEQUENCE(10,3,1,1)"}
+
+Best practices:
+- Place the formula on a single anchor cell only — Excel spills automatically; do not write
+  the same formula across the spill range.
+- Leave enough empty cells below and to the right of the anchor for the result to spill into.
+  If a non-empty cell blocks the spill, Excel shows #SPILL!.
+- Do not put dynamic-array formulas inside an Excel Table (create_table) — tables disable
+  spilling.  Place them on plain sheet cells instead.
+- Reference a spilled range from another formula with the # operator: =SUM(F2#) sums the
+  entire spill range starting at F2.
+- The first time the file is opened in Excel the formulas are recalculated and the spill
+  range is established; older Excel versions (pre-365) will show #NAME? — this is expected.
+
 ## Rules
 1. Sheet names and addresses must exactly match the context (case-sensitive).
 2. The "sheet" field in every change must be the sheet NAME (e.g. "Posts Summary"), never a cell address (e.g. never "B13" or "A1:D10").

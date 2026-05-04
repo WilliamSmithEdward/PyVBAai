@@ -2,7 +2,10 @@
 
 **Chat naturally with your Excel workbooks — powered by OpenAI GPT.**
 
-PyVBAai is a standalone Windows desktop application that lets you load any `.xlsx` / `.xlsm` file, send natural-language requests to an AI, and have it safely modify cells, formulas, sheets, and VBA macros — with full preview before anything changes.
+PyVBAai is a Windows desktop application that lets you load any `.xlsx` /
+`.xlsm` file, send natural-language requests to an AI, and have it safely
+modify cells, formulas, sheets, charts, tables, and VBA macros — with a full
+preview before anything changes.
 
 ---
 
@@ -10,11 +13,13 @@ PyVBAai is a standalone Windows desktop application that lets you load any `.xls
 
 | Feature | Detail |
 |---|---|
-| **No Python required** | Single `.exe` (PyInstaller), no installer, no admin rights |
-| **Full workbook context** | Reads cells, formulas, VBA modules, named ranges via Excel COM |
+| **No Python required at runtime** | Single `.exe` (PyInstaller), no installer, no admin rights |
+| **Pure-Python workbook I/O** | All reads and writes use `openpyxl` — no Excel COM dependency for editing |
+| **Full workbook context** | Cells, formulas, formatting, named ranges, tables, charts, pivot tables, VBA modules |
+| **Dynamic-array formulas** | FILTER, UNIQUE, SORT, XLOOKUP, SEQUENCE, LET, LAMBDA, etc. spill correctly in Excel 365 (see [docs/dynamic-array-formulas.md](docs/dynamic-array-formulas.md)) |
 | **Natural chat UI** | Multi-turn conversation, Markdown rendering, typing indicator |
-| **Safe change preview** | All proposed changes shown with diff before applying |
-| **Automatic backups** | Timestamped `.xlsm` backup created before every apply |
+| **Safe change preview** | Every change shown with diff before applying |
+| **Automatic backups** | Timestamped backup created before every apply |
 | **Drag & drop** | Drop any `.xlsx` / `.xlsm` onto the window to load it |
 | **Dark / Light mode** | Toggle in toolbar or Settings |
 | **Selective context** | Include/exclude sheets and VBA modules via Settings |
@@ -25,8 +30,11 @@ PyVBAai is a standalone Windows desktop application that lets you load any `.xls
 
 ### Runtime
 - **Windows 10 or 11 (x64)**
-- **Microsoft Excel 365 x64** installed
 - **OPENAI_API_KEY** set as a user-level Windows environment variable
+- **Microsoft Excel** (any modern version) — required only for opening the
+  resulting workbooks; PyVBAai itself does not need Excel installed to read
+  or write the files. Excel 365 is required if you want dynamic-array
+  formulas to spill on open.
 
 ### Build-time (only if building from source)
 - Python 3.11+
@@ -46,7 +54,15 @@ PyVBAai is a standalone Windows desktop application that lets you load any `.xls
 git clone https://github.com/YourName/PyVBAai.git
 cd PyVBAai
 build.bat
-# Output: dist\PyVBAai.exe
+:: Output: dist\PyVBAai.exe
+```
+
+### Option C — run from source
+```bat
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+python main.py
 ```
 
 ---
@@ -61,27 +77,17 @@ build.bat
 
 ---
 
-## Enabling VBA Access (required for VBA read/write)
-
-By default Excel blocks programmatic access to the VBA project.
-
-1. Open Excel → **File** → **Options** → **Trust Center** → **Trust Center Settings**
-2. Click **Macro Settings**
-3. Check **"Trust access to the VBA project object model"**
-4. Click OK
-
----
-
 ## How It Works
 
 ```
-User loads .xlsx/.xlsm
+User loads .xlsx / .xlsm
         │
         ▼
-Excel COM reads all sheets + VBA modules + named ranges
+openpyxl reads sheets, formulas, formats, named ranges,
+charts, tables, pivot tables, and VBA modules (from vbaProject.bin)
         │
         ▼
-Compact token-efficient context built
+Compact, token-efficient context built
         │
 User types a message in the chat window
         │
@@ -97,48 +103,30 @@ Preview dialog shows each change with optional VBA diff
 User clicks "Apply Changes"
         │
         ▼
-Versioned backup created  →  changes applied via COM
+Versioned backup created  →  changes applied via openpyxl
         │
-Workbook re-read to update context for next turn
-```
-
----
-
-## Context Format sent to GPT
-
-```
-=== WORKBOOK: Budget2024.xlsm ===
-SHEETS (3): Sheet1(150r×10c), Data(500r×6c), Summary(15r×4c)
-VBA MODULES (2): Module1, ThisWorkbook
-NAMED RANGES (1):
-  BudgetTotal = Sheet1!$A$1:$D$10
-
---- CELLS: Sheet1 (100/150 rows shown, 50 rows truncated) ---
-  A1="Category", B1="Jan", C1="Feb"
-  A2="Revenue", B2=1000, C2=1200
-  A10="Total", B10={=SUM(B2:B9)}
-...
-
---- VBA: Module1 (Module) ---
-Sub CalculateTotals()
-    ...
-End Sub
+Workbook re-read to refresh context for the next turn
 ```
 
 ---
 
 ## Supported Change Operations
 
-| Operation | Description |
+| Category | Operations |
 |---|---|
-| `set_cell` | Set a cell value or formula |
-| `set_range` | Write a 2-D array of values |
-| `clear_range` | Clear cell contents |
-| `add_sheet` / `delete_sheet` | Add or remove a worksheet |
-| `rename_sheet` / `move_sheet` / `copy_sheet` | Structural sheet changes |
-| `set_vba` | Replace a VBA module's code |
-| `add_vba_module` / `delete_vba_module` | Add or remove VBA modules |
-| `add_named_range` / `delete_named_range` | Manage named ranges |
+| **Cell content** | `set_cell`, `set_range`, `clear_range`, `clear_format` |
+| **Formatting** | `set_format`, `set_col_width`, `set_row_height`, `merge_cells`, `unmerge_cells`, `set_tab_color` |
+| **Sheet structure** | `add_sheet`, `delete_sheet`, `rename_sheet`, `move_sheet`, `copy_sheet`, `hide_sheet`, `unhide_sheet` |
+| **Rows / columns** | `insert_rows`, `delete_rows`, `insert_cols`, `delete_cols`, `hide_rows`, `unhide_rows`, `hide_cols`, `unhide_cols` |
+| **Tables** | `create_table`, `delete_table` |
+| **Charts** | `create_chart`, `delete_chart` (bar, col, line, pie, doughnut, scatter, area, radar) |
+| **View** | `freeze_panes`, `set_zoom`, `set_print_area`, `auto_filter` |
+| **Protection** | `protect_sheet`, `unprotect_sheet` |
+| **Named ranges** | `set_named_range`, `delete_named_range` |
+| **VBA** | `set_vba`, `add_vba_module`, `delete_vba_module` |
+
+Pivot tables and pivot charts cannot be created directly — they must be
+generated via a VBA macro (`set_vba`).
 
 ---
 
@@ -146,11 +134,11 @@ End Sub
 
 | Setting | Default | Description |
 |---|---|---|
-| Model | `gpt-4o` | OpenAI model to use |
+| Model | `gpt-4o` | OpenAI model used for chat |
 | Max rows per sheet | `100` | Context truncation limit |
 | Include formulas | ✅ | Show cell formulas in context |
 | Include VBA | ✅ | Include VBA source in context |
-| Include named ranges | ✅ | Include named ranges |
+| Include named ranges | ✅ | Include named ranges in context |
 | Max backups | `20` | Oldest backups pruned automatically |
 
 ---
@@ -159,25 +147,50 @@ End Sub
 
 ```
 PyVBAai/
-├── main.py                  # Entry point
+├── main.py                     # Entry point
 ├── app/
-│   ├── main_window.py       # Main QMainWindow
-│   ├── chat_widget.py       # Chat UI (bubbles, input bar)
-│   ├── workbook_panel.py    # Sidebar tree + VBA viewer
-│   ├── preview_dialog.py    # Change preview + diff
-│   ├── settings_dialog.py   # Settings tabs
-│   ├── theme.py             # Dark / light QSS
-│   └── workers.py           # QThread workers
+│   ├── main_window.py          # Main QMainWindow
+│   ├── chat_widget.py          # Chat UI (bubbles, input bar)
+│   ├── workbook_panel.py       # Sidebar tree + VBA viewer
+│   ├── preview_dialog.py       # Change preview + diff
+│   ├── settings_dialog.py      # Settings tabs
+│   ├── vba_dialog.py           # VBA module viewer
+│   ├── theme.py                # Dark / light QSS
+│   ├── config.py               # QSettings wrapper
+│   ├── logger.py               # Rotating-file logger
+│   └── workers.py              # QThread workers
 ├── core/
-│   ├── excel_reader.py      # COM workbook extraction
-│   ├── excel_writer.py      # COM change application
-│   ├── context_builder.py   # Token-efficient context
-│   ├── ai_client.py         # OpenAI wrapper
-│   └── backup_manager.py    # Versioned backups
+│   ├── excel_reader.py         # openpyxl workbook extraction
+│   ├── excel_writer.py         # openpyxl change application + dynamic-array post-processing
+│   ├── context_builder.py      # Token-efficient context
+│   ├── ai_client.py            # OpenAI wrapper + system prompt
+│   └── backup_manager.py       # Versioned backups
 ├── models/
-│   ├── workbook.py          # Workbook data classes
-│   └── conversation.py      # Conversation / AIResponse
+│   ├── workbook.py             # Workbook data classes
+│   └── conversation.py         # Conversation / AIResponse
+├── docs/
+│   ├── cell-notation.md
+│   └── dynamic-array-formulas.md
+├── tests/                      # pytest suite (~268 tests)
 ├── requirements.txt
-├── PyVBAai.spec             # PyInstaller spec
-└── build.bat                # One-click build script
+├── PyVBAai.spec                # PyInstaller spec
+└── build.bat                   # One-click build script
 ```
+
+---
+
+## Development
+
+```bat
+:: Run the test suite
+python -m pytest tests\ -q
+
+:: Lint
+python -m ruff check .
+```
+
+---
+
+## License
+
+See [LICENSE](LICENSE).
