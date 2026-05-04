@@ -1,0 +1,19 @@
+# Virtual environment
+.venv/
+
+# PyInstaller
+build/
+dist/
+*.spec.bak
+__pycache__/
+*.pyc
+*.pyo
+
+# Backups created by the app
+backups/
+
+# VS Code
+.vscode/
+
+# PyInstaller temp
+*.manifest

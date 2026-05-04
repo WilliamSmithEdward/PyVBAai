@@ -1,0 +1,5 @@
+PySide6>=6.6.0
+openai>=1.12.0
+pywin32>=306
+markdown>=3.5.2
+pyinstaller>=6.4.0
