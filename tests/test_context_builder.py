@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from core.context_builder import (
-    _MAX_CONTEXT_CHARS,
+    _DEFAULT_MAX_CONTEXT_CHARS,
     _parse_area_addr,
     build_context,
     estimate_tokens,
@@ -243,14 +243,14 @@ class TestBuildContextHardCap:
         # Create a sheet with enough cells to exceed 60k chars.
         # Each output line is ~92 chars; need >652 rows to exceed 60k.
         cells = {}
-        for r in range(1, 800):
+        for r in range(1, 5000):
             addr = f"A{r}"
             cells[addr] = CellData(row=r, col=1, address=addr, value="x" * 200)
-        s = SheetData(index=1, name="Big", used_range_address="A1:A799",
-                      row_count=799, col_count=1, cells=cells)
+        s = SheetData(index=1, name="Big", used_range_address="A1:A4999",
+                      row_count=4999, col_count=1, cells=cells)
         wb = _make_wb(sheets=[s])
         ctx = build_context(wb)
-        assert len(ctx) <= _MAX_CONTEXT_CHARS + 100  # small slack for the truncation message
+        assert len(ctx) <= _DEFAULT_MAX_CONTEXT_CHARS + 200  # small slack for the truncation message
         assert "CONTEXT TRUNCATED" in ctx
 
     def test_no_truncation_for_small_workbook(self, workbook):

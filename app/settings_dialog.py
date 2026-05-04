@@ -27,6 +27,16 @@ from core.ai_client import AIClient
 from models.workbook import ALL_FMT_FIELDS, ContextConfig
 
 
+class _CommaSpinBox(QSpinBox):
+    """QSpinBox that displays its value with thousands-separator commas."""
+
+    def textFromValue(self, value: int) -> str:  # noqa: N802
+        return f"{value:,}"
+
+    def valueFromText(self, text: str) -> int:  # noqa: N802
+        return int(text.replace(",", "") or 0)
+
+
 def _qbool(val) -> bool:
     """QSettings on Windows stores booleans as strings 'true'/'false'."""
     if isinstance(val, bool):
@@ -133,6 +143,20 @@ class SettingsDialog(QDialog):
         form.addRow(self._include_named)
         layout.addLayout(form)
 
+        # -- Max context characters -------------------------------------------
+        chars_group = QGroupBox("Max context characters")
+        chars_layout = QHBoxLayout(chars_group)
+        chars_layout.setSpacing(8)
+        self._max_chars_spin = _CommaSpinBox()
+        self._max_chars_spin.setRange(10_000, 500_000)
+        self._max_chars_spin.setSingleStep(10_000)
+        self._max_chars_spin.setValue(150_000)
+        self._max_chars_spin.setFixedWidth(120)
+        chars_layout.addWidget(self._max_chars_spin)
+        chars_layout.addWidget(QLabel("characters sent to the AI per request"))
+        chars_layout.addStretch()
+        layout.addWidget(chars_group)
+
         # -- Max rows per area ------------------------------------------------
         rows_group = QGroupBox("Row limit per data area")
         rows_layout = QHBoxLayout(rows_group)
@@ -140,7 +164,7 @@ class SettingsDialog(QDialog):
         self._max_rows_enabled = QCheckBox("Limit to")
         self._max_rows_spin = QSpinBox()
         self._max_rows_spin.setRange(1, 10000)
-        self._max_rows_spin.setValue(50)
+        self._max_rows_spin.setValue(20)
         self._max_rows_spin.setSuffix(" rows")
         self._max_rows_spin.setFixedWidth(100)
         self._max_rows_enabled.toggled.connect(self._max_rows_spin.setEnabled)
@@ -194,8 +218,7 @@ class SettingsDialog(QDialog):
         layout.addWidget(fmt_group)
 
         note = QLabel(
-            "Per-sheet and per-module filtering is available "
-            "via the <b>Context Filter</b> button in the workbook explorer sidebar."
+            "Per-sheet and per-module filtering coming in a future update."
         )
         note.setWordWrap(True)
         note.setTextFormat(Qt.TextFormat.RichText)
@@ -256,9 +279,10 @@ class SettingsDialog(QDialog):
         self._include_formulas.setChecked(_qbool(s.value("context/include_formulas", True)))
         self._include_vba.setChecked(_qbool(s.value("context/include_vba", True)))
         self._include_named.setChecked(_qbool(s.value("context/include_named_ranges", True)))
-        max_rows_enabled = _qbool(s.value("context/max_rows_enabled", False))
+        self._max_chars_spin.setValue(int(str(s.value("context/max_chars", 150_000))))
+        max_rows_enabled = _qbool(s.value("context/max_rows_enabled", True))
         self._max_rows_enabled.setChecked(max_rows_enabled)
-        self._max_rows_spin.setValue(int(str(s.value("context/max_rows", 50))))
+        self._max_rows_spin.setValue(int(str(s.value("context/max_rows", 20))))
         self._max_rows_spin.setEnabled(max_rows_enabled)
         for key, cb in self._fmt_checks.items():
             cb.setChecked(_qbool(s.value(f"context/fmt_{key}", True)))
@@ -274,6 +298,7 @@ class SettingsDialog(QDialog):
         s.setValue("context/include_formulas", self._include_formulas.isChecked())
         s.setValue("context/include_vba", self._include_vba.isChecked())
         s.setValue("context/include_named_ranges", self._include_named.isChecked())
+        s.setValue("context/max_chars", self._max_chars_spin.value())
         s.setValue("context/max_rows_enabled", self._max_rows_enabled.isChecked())
         s.setValue("context/max_rows", self._max_rows_spin.value())
         for key, cb in self._fmt_checks.items():
@@ -301,8 +326,8 @@ class SettingsDialog(QDialog):
                 sname, aaddr = pair.split("||", 1)
                 excluded_areas.setdefault(sname, []).append(aaddr)
         max_rows: int | None = None
-        if _qbool(s.value("context/max_rows_enabled", False)):
-            max_rows = int(str(s.value("context/max_rows", 50)))
+        if _qbool(s.value("context/max_rows_enabled", True)):
+            max_rows = int(str(s.value("context/max_rows", 20)))
         fmt_include: set[str] = {
             key for key in ALL_FMT_FIELDS
             if _qbool(s.value(f"context/fmt_{key}", True))
@@ -321,6 +346,10 @@ class SettingsDialog(QDialog):
     @staticmethod
     def load_model() -> str:
         return get_settings().value("ai/model") or ""
+
+    @staticmethod
+    def load_max_context_chars() -> int:
+        return int(str(get_settings().value("context/max_chars", 150_000)))
 
     @staticmethod
     def load_max_backups() -> int:

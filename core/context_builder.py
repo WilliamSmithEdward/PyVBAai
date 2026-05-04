@@ -20,8 +20,8 @@ from models.workbook import CellFormat, ContextConfig, WorkbookData
 
 # Rough token estimate: 1 token ~= 4 characters
 _CHARS_PER_TOKEN = 4
-# Leave this many characters free for conversation history + response
-_MAX_CONTEXT_CHARS = 60_000
+# Fallback hard cap; overridden at runtime by the value from QSettings
+_DEFAULT_MAX_CONTEXT_CHARS = 150_000
 
 # Matches absolute Excel area addresses like $A$1:$C$10
 _AREA_ADDR_RE = re.compile(r'\$([A-Z]+)\$(\d+):\$([A-Z]+)\$(\d+)')
@@ -227,6 +227,19 @@ def build_context(wb: WorkbookData, config: ContextConfig | None = None) -> str:
                         f" — increase 'Max rows per area' in Settings > Context]"
                     )
 
+        # Charts on this sheet
+        if sheet.charts:
+            chart_strs = []
+            for ch in sheet.charts:
+                label = f'"{ch.title}"' if ch.title else "Untitled"
+                loc = f" @ {ch.anchor}" if ch.anchor else ""
+                chart_strs.append(f"{ch.chart_type} {label}{loc}")
+            parts.append("  CHARTS: " + ", ".join(chart_strs))
+
+        # Pivot tables on this sheet
+        if sheet.pivot_tables:
+            parts.append("  PIVOT TABLES: " + ", ".join(sheet.pivot_tables))
+
         parts.append("")
 
     # -- VBA ------------------------------------------------------------------
@@ -245,8 +258,18 @@ def build_context(wb: WorkbookData, config: ContextConfig | None = None) -> str:
     context = "\n".join(parts)
 
     # Hard-trim if way over budget (should not normally happen)
-    if len(context) > _MAX_CONTEXT_CHARS:
-        context = context[:_MAX_CONTEXT_CHARS] + "\n\n[CONTEXT TRUNCATED - too large]"
+    try:
+        from app.config import get_settings
+        max_chars = int(str(get_settings().value("context/max_chars", _DEFAULT_MAX_CONTEXT_CHARS)))
+    except Exception:  # noqa: BLE001
+        max_chars = _DEFAULT_MAX_CONTEXT_CHARS
+    if len(context) > max_chars:
+        context = (
+            context[:max_chars]
+            + "\n\n[CONTEXT TRUNCATED: workbook is too large to show fully. "
+            "Apply changes to the sheets and ranges you can see above. "
+            "Do NOT ask the user for more context — work with what is provided.]"
+        )
 
     return context
 

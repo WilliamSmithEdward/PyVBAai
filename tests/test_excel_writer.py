@@ -16,6 +16,8 @@ from core.excel_writer import (
     _add_sheet,
     _clear_range,
     _copy_sheet,
+    _create_chart,
+    _delete_chart,
     _delete_named_range,
     _delete_sheet,
     _dispatch_openpyxl,
@@ -283,3 +285,185 @@ class TestSetFormatColors:
         ws = owb.active
         _set_cell(owb, {"sheet": ws.title, "cell": "B1", "value": "x", "flags": "~92D050"})
         assert ws["B1"].fill.fgColor.rgb[-6:] == "92D050"
+
+
+# ── _create_chart / _delete_chart ─────────────────────────────────────────────
+
+def _make_chart_data_wb():
+    """Return a workbook with simple chart source data on Sheet1."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+    ws.append(["Month", "Sales", "Cost"])
+    ws.append(["Jan", 100, 80])
+    ws.append(["Feb", 120, 90])
+    ws.append(["Mar", 140, 95])
+    return wb
+
+
+class TestCreateChart:
+    def test_column_chart_added(self):
+        wb = _make_chart_data_wb()
+        _create_chart(wb, {
+            "sheet": "Sheet1",
+            "chart_type": "col",
+            "data_range": "A1:C4",
+            "anchor": "E2",
+            "title": "Sales Chart",
+        })
+        assert len(wb["Sheet1"]._charts) == 1
+
+    def test_bar_chart_type_attribute(self):
+        wb = _make_chart_data_wb()
+        _create_chart(wb, {
+            "sheet": "Sheet1",
+            "chart_type": "bar",
+            "data_range": "A1:C4",
+            "anchor": "E2",
+        })
+        chart = wb["Sheet1"]._charts[0]
+        assert chart.type == "bar"
+
+    def test_line_chart_added(self):
+        wb = _make_chart_data_wb()
+        _create_chart(wb, {
+            "sheet": "Sheet1",
+            "chart_type": "line",
+            "data_range": "A1:C4",
+            "anchor": "E2",
+        })
+        from openpyxl.chart import LineChart
+        assert isinstance(wb["Sheet1"]._charts[0], LineChart)
+
+    def test_pie_chart_added(self):
+        wb = _make_chart_data_wb()
+        # pie uses only 2 columns: labels + values
+        _create_chart(wb, {
+            "sheet": "Sheet1",
+            "chart_type": "pie",
+            "data_range": "A1:B4",
+            "anchor": "E2",
+        })
+        from openpyxl.chart import PieChart
+        assert isinstance(wb["Sheet1"]._charts[0], PieChart)
+
+    def test_scatter_chart_added(self):
+        wb = _make_chart_data_wb()
+        _create_chart(wb, {
+            "sheet": "Sheet1",
+            "chart_type": "scatter",
+            "data_range": "A1:C4",
+            "anchor": "E2",
+        })
+        from openpyxl.chart import ScatterChart
+        assert isinstance(wb["Sheet1"]._charts[0], ScatterChart)
+
+    def test_title_set(self):
+        wb = _make_chart_data_wb()
+        _create_chart(wb, {
+            "sheet": "Sheet1",
+            "chart_type": "col",
+            "data_range": "A1:C4",
+            "anchor": "E2",
+            "title": "My Chart",
+        })
+        # openpyxl wraps the title string in a Title object; verify it is set
+        chart = wb["Sheet1"]._charts[0]
+        t = chart.title
+        title_text = str(t) if isinstance(t, str) else t.tx.rich.p[0].r[0].t
+        assert title_text == "My Chart"
+
+    def test_size_set(self):
+        wb = _make_chart_data_wb()
+        _create_chart(wb, {
+            "sheet": "Sheet1",
+            "chart_type": "line",
+            "data_range": "A1:C4",
+            "anchor": "E2",
+            "width": 20,
+            "height": 12,
+        })
+        chart = wb["Sheet1"]._charts[0]
+        assert chart.width == 20
+        assert chart.height == 12
+
+    def test_unknown_type_raises(self):
+        wb = _make_chart_data_wb()
+        with pytest.raises(ApplyError, match="Unknown chart_type"):
+            _create_chart(wb, {
+                "sheet": "Sheet1",
+                "chart_type": "donut_invalid",
+                "data_range": "A1:C4",
+                "anchor": "E2",
+            })
+
+    def test_single_column_range_raises(self):
+        wb = _make_chart_data_wb()
+        with pytest.raises(ApplyError, match="at least 2 columns"):
+            _create_chart(wb, {
+                "sheet": "Sheet1",
+                "chart_type": "col",
+                "data_range": "A1:A4",
+                "anchor": "E2",
+            })
+
+    def test_unknown_sheet_raises(self):
+        wb = _make_chart_data_wb()
+        with pytest.raises(ApplyError, match="Sheet not found"):
+            _create_chart(wb, {
+                "sheet": "Ghost",
+                "chart_type": "col",
+                "data_range": "A1:C4",
+                "anchor": "E2",
+            })
+
+    def test_column_alias_works(self):
+        wb = _make_chart_data_wb()
+        _create_chart(wb, {
+            "sheet": "Sheet1",
+            "chart_type": "column",
+            "data_range": "A1:C4",
+            "anchor": "E2",
+        })
+        from openpyxl.chart import BarChart
+        chart = wb["Sheet1"]._charts[0]
+        assert isinstance(chart, BarChart)
+        assert chart.type == "col"
+
+    def test_stacked_grouping(self):
+        wb = _make_chart_data_wb()
+        _create_chart(wb, {
+            "sheet": "Sheet1",
+            "chart_type": "col",
+            "data_range": "A1:C4",
+            "anchor": "E2",
+            "grouping": "stacked",
+        })
+        assert wb["Sheet1"]._charts[0].grouping == "stacked"
+
+
+class TestDeleteChart:
+    def test_delete_by_title(self):
+        wb = _make_chart_data_wb()
+        _create_chart(wb, {
+            "sheet": "Sheet1", "chart_type": "col",
+            "data_range": "A1:C4", "anchor": "E2", "title": "Remove Me",
+        })
+        assert len(wb["Sheet1"]._charts) == 1
+        _delete_chart(wb, {"sheet": "Sheet1", "title": "Remove Me"})
+        assert len(wb["Sheet1"]._charts) == 0
+
+    def test_delete_wrong_title_raises(self):
+        wb = _make_chart_data_wb()
+        _create_chart(wb, {
+            "sheet": "Sheet1", "chart_type": "col",
+            "data_range": "A1:C4", "anchor": "E2", "title": "Keep Me",
+        })
+        with pytest.raises(ApplyError, match="not found"):
+            _delete_chart(wb, {"sheet": "Sheet1", "title": "Wrong Title"})
+        assert len(wb["Sheet1"]._charts) == 1
+
+    def test_delete_no_charts_raises(self):
+        wb = _make_chart_data_wb()
+        with pytest.raises(ApplyError, match="No charts found"):
+            _delete_chart(wb, {"sheet": "Sheet1", "title": "Any"})

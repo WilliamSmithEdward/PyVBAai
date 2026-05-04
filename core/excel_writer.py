@@ -560,6 +560,145 @@ def _set_zoom(owb: Any, p: dict) -> None:
     ws.sheet_view.zoomScale = max(10, min(400, int(p["zoom"])))
 
 
+# ── chart operations ──────────────────────────────────────────────────────────
+
+_VALID_CHART_TYPES = frozenset(
+    {"bar", "col", "column", "line", "pie", "doughnut", "scatter", "area", "radar"}
+)
+
+
+def _create_chart(owb: Any, p: dict) -> None:
+    """Create a chart on a worksheet.
+
+    params:
+      sheet       - sheet name
+      chart_type  - bar | col | line | pie | doughnut | scatter | area | radar
+      data_range  - e.g. "A1:D10" or "Sheet2!A1:D10"
+                    First column = categories/x-axis, first row = series labels.
+      anchor      - top-left cell for chart placement, e.g. "F2"
+      title       - chart title (optional)
+      x_axis_title, y_axis_title - axis labels (optional, not used for pie/doughnut)
+      grouping    - bar/col only: clustered | stacked | percentStacked (default clustered)
+      width       - width in cm (default 15)
+      height      - height in cm (default 10)
+    """
+    import openpyxl.utils
+    from openpyxl.chart import Reference
+
+    ws = _get_openpyxl_sheet(owb, p["sheet"])
+    chart_type = str(p["chart_type"]).lower().strip()
+    if chart_type == "column":
+        chart_type = "col"
+    if chart_type not in _VALID_CHART_TYPES:
+        raise ApplyError(
+            f"Unknown chart_type '{chart_type}'. "
+            "Valid types: bar, col, line, pie, doughnut, scatter, area, radar"
+        )
+
+    # Build the chart object
+    if chart_type in ("bar", "col"):
+        from openpyxl.chart import BarChart
+        chart: Any = BarChart()
+        chart.type = chart_type
+        chart.grouping = p.get("grouping", "clustered")
+    elif chart_type == "line":
+        from openpyxl.chart import LineChart
+        chart = LineChart()
+    elif chart_type == "pie":
+        from openpyxl.chart import PieChart
+        chart = PieChart()
+    elif chart_type == "doughnut":
+        from openpyxl.chart import DoughnutChart
+        chart = DoughnutChart()
+    elif chart_type == "scatter":
+        from openpyxl.chart import ScatterChart
+        chart = ScatterChart()
+        chart.style = 10
+    elif chart_type == "area":
+        from openpyxl.chart import AreaChart
+        chart = AreaChart()
+    else:  # radar
+        from openpyxl.chart import RadarChart
+        chart = RadarChart()
+        chart.type = "standard"
+
+    if p.get("title"):
+        chart.title = str(p["title"])
+    chart.width = float(p.get("width", 15))
+    chart.height = float(p.get("height", 10))
+
+    if chart_type not in ("pie", "doughnut"):
+        if p.get("x_axis_title") and hasattr(chart, "x_axis"):
+            chart.x_axis.title = str(p["x_axis_title"])
+        if p.get("y_axis_title") and hasattr(chart, "y_axis"):
+            chart.y_axis.title = str(p["y_axis_title"])
+
+    # Resolve the data range (optional sheet prefix)
+    data_range = str(p["data_range"])
+    ref_ws = ws
+    if "!" in data_range:
+        ref_sheet_name, data_range = data_range.split("!", 1)
+        ref_ws = _get_openpyxl_sheet(owb, ref_sheet_name.strip("'\""))
+
+    min_col, min_row, max_col, max_row = openpyxl.utils.range_boundaries(data_range)
+    if min_col is None or min_row is None:
+        raise ApplyError(f"Invalid data_range '{p['data_range']}'.")
+    if max_col <= min_col:
+        raise ApplyError(
+            f"data_range '{p['data_range']}' must span at least 2 columns "
+            "(first column = categories, remaining columns = data series)."
+        )
+
+    if chart_type == "scatter":
+        from openpyxl.chart import Series
+        # x values start after header row; y values include the header row so
+        # title_from_data=True can pick up the series label from row min_row.
+        x_ref = Reference(ref_ws, min_col=min_col, min_row=min_row + 1, max_row=max_row)
+        for col_idx in range(min_col + 1, max_col + 1):
+            y_ref = Reference(ref_ws, min_col=col_idx, min_row=min_row, max_row=max_row)
+            ser = Series(y_ref, x_ref, title_from_data=True)
+            chart.series.append(ser)
+    else:
+        # data = columns 2..N with header row; categories = column 1 data rows
+        data_ref = Reference(
+            ref_ws, min_col=min_col + 1, min_row=min_row, max_col=max_col, max_row=max_row
+        )
+        chart.add_data(data_ref, titles_from_data=True)
+        cats_ref = Reference(ref_ws, min_col=min_col, min_row=min_row + 1, max_row=max_row)
+        chart.set_categories(cats_ref)
+
+    ws.add_chart(chart, str(p.get("anchor", "A1")))
+
+
+def _delete_chart(owb: Any, p: dict) -> None:
+    """Remove a chart from a sheet, identified by title.
+
+    params: sheet, title
+    """
+    ws = _get_openpyxl_sheet(owb, p["sheet"])
+    title = str(p.get("title", "")).strip()
+    charts = list(getattr(ws, "_charts", []))
+    if not charts:
+        raise ApplyError(f"No charts found on sheet '{p['sheet']}'.")
+    kept = []
+    removed = 0
+    for chart in charts:
+        ct = getattr(chart, "title", None)
+        chart_title = str(ct) if isinstance(ct, str) else ""
+        if not chart_title and ct is not None:
+            try:
+                chart_title = str(ct.tx.rich.p[0].r[0].t)
+            except (AttributeError, IndexError, TypeError):
+                pass
+        if title and chart_title == title:
+            removed += 1
+        else:
+            kept.append(chart)
+    if removed == 0:
+        raise ApplyError(f"Chart titled '{title}' not found on sheet '{p['sheet']}'.")
+    ws._charts[:] = kept
+
+
 # ── handler registry (module-level for performance) ───────────────────────────
 
 _OPENPYXL_HANDLERS.update({
@@ -598,4 +737,6 @@ _OPENPYXL_HANDLERS.update({
     "merge_cells":       _merge_cells,
     "unmerge_cells":     _unmerge_cells,
     "set_format":        _set_format,
+    "create_chart":      _create_chart,
+    "delete_chart":      _delete_chart,
 })

@@ -133,14 +133,31 @@ Before finalising any VBA code, perform a mental lint pass and verify:
 {"type":"set_named_range",    "name":"MyRange",  "refers_to":"Sheet1!$A$1:$D$10"}
 {"type":"delete_named_range", "name":"MyRange"}
 
+### Charts
+{"type":"create_chart", "sheet":"Sheet1", "chart_type":"col", "data_range":"A1:D10", "anchor":"F2", "title":"Sales by Month"}
+{"type":"delete_chart", "sheet":"Sheet1", "title":"Sales by Month"}
+- chart_type: bar (horizontal) | col (vertical column) | line | pie | doughnut | scatter | area | radar
+- data_range: range covering the full data including headers. First column = categories/x-axis labels, first row = series labels, remaining cells = values.
+  Example: A1:D10 where A=month names, B-D=three data series, row 1=headers.
+- anchor: top-left cell where the chart is placed (e.g. "F2").
+- Optional: title, x_axis_title, y_axis_title, width (cm, default 15), height (cm, default 10)
+- Optional for bar/col: grouping ("clustered" default | "stacked" | "percentStacked")
+- For pie/doughnut: data_range should have exactly 2 columns (labels + values).
+- Existing charts on a sheet are listed in context as CHARTS: type "title" @ anchor.
+
+### Pivot Tables
+Pivot tables cannot be created directly — use a VBA macro (set_vba) to create them.
+Existing pivot tables on a sheet are listed in context as PIVOT TABLES: name1, name2.
+
 ## Rules
 1. Sheet names and addresses must exactly match the context (case-sensitive).
-2. Use standard Excel formula syntax (= prefix in "formula" key, no = inside { } notation).
-3. VBA code must be syntactically complete; escape newlines as \\n in JSON strings.
-4. If the user asks a question or the action requires no changes, set changes to [].
-5. Be concise in 'message'. Use 'diff_summary' for a bullet-point list of changes made.
-6. If the context is truncated, acknowledge this and ask if more detail is needed.
-7. Never invent sheet names or cell references not present in the context.
+2. The "sheet" field in every change must be the sheet NAME (e.g. "Posts Summary"), never a cell address (e.g. never "B13" or "A1:D10").
+3. Use standard Excel formula syntax (= prefix in "formula" key, no = inside { } notation).
+4. VBA code must be syntactically complete; escape newlines as \\n in JSON strings.
+5. If the user asks a question or the action requires no changes, set changes to [].
+6. Be concise in 'message'. Use 'diff_summary' for a bullet-point list of changes made.
+7. If the context is truncated, apply changes to the sheets and ranges you can see — never ask the user to provide more context, as they have no way to do so.
+8. Never invent sheet names or cell references not present in the context.
 8. hex colors are RRGGBB (6 chars) — do not include alpha prefix.
 """
 

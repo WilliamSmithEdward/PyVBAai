@@ -16,6 +16,7 @@ from app.logger import get_logger
 from models.workbook import (
     CellData,
     CellFormat,
+    ChartData,
     ContextConfig,
     NamedRange,
     SheetData,
@@ -178,6 +179,81 @@ def _cell_format(cell: Any) -> CellFormat | None:
     return fmt if changed else None
 
 
+# -- chart / pivot helpers ------------------------------------------------------
+
+_CHART_CLASS_TO_TYPE: dict[str, str] = {
+    "BarChart":     "bar",   # refine to "col" if chart.type == "col"
+    "LineChart":    "line",
+    "PieChart":     "pie",
+    "DoughnutChart": "doughnut",
+    "ScatterChart": "scatter",
+    "AreaChart":    "area",
+    "RadarChart":   "radar",
+    "BubbleChart":  "bubble",
+    "StockChart":   "stock",
+    "SurfaceChart": "surface",
+}
+
+
+def _extract_chart_title(chart: Any) -> str:
+    t = getattr(chart, "title", None)
+    if t is None:
+        return ""
+    if isinstance(t, str):
+        return t
+    try:
+        return str(t.tx.rich.p[0].r[0].t)
+    except (AttributeError, IndexError, TypeError):
+        pass
+    try:
+        return str(t.tx.strRef.f)
+    except (AttributeError, TypeError):
+        pass
+    return ""
+
+
+def _extract_chart_anchor(chart: Any) -> str:
+    anchor = getattr(chart, "anchor", None)
+    if anchor is None:
+        return ""
+    if isinstance(anchor, str):
+        return anchor
+    # TwoCellAnchor / OneCellAnchor store position in ._from
+    try:
+        from openpyxl.utils import get_column_letter
+        col = get_column_letter(anchor._from.col + 1)
+        row = anchor._from.row + 1
+        return f"{col}{row}"
+    except (AttributeError, Exception):  # noqa: BLE001
+        pass
+    return ""
+
+
+def _read_sheet_charts(ws: Any) -> list[ChartData]:
+    charts: list[ChartData] = []
+    for chart in getattr(ws, "_charts", []):
+        cls_name = type(chart).__name__
+        chart_type = _CHART_CLASS_TO_TYPE.get(cls_name, cls_name.lower())
+        if cls_name == "BarChart":
+            bar_type = getattr(chart, "type", "col") or "col"
+            chart_type = str(bar_type).lower()
+        charts.append(ChartData(
+            chart_type=chart_type,
+            title=_extract_chart_title(chart),
+            anchor=_extract_chart_anchor(chart),
+        ))
+    return charts
+
+
+def _read_sheet_pivots(ws: Any) -> list[str]:
+    names: list[str] = []
+    for pivot in getattr(ws, "_pivots", []):
+        name = getattr(pivot, "name", None)
+        if name:
+            names.append(str(name))
+    return names
+
+
 # -- main entry point ----------------------------------------------------------
 
 def read_workbook(file_path: str, config: ContextConfig | None = None) -> WorkbookData:
@@ -269,6 +345,11 @@ def read_workbook(file_path: str, config: ContextConfig | None = None) -> Workbo
 
                 wb_data.sheets.append(sheet_data)
                 sheet_data.area_addresses = _connected_area_addresses(sheet_data.cells)
+                try:
+                    sheet_data.charts = _read_sheet_charts(ws)
+                    sheet_data.pivot_tables = _read_sheet_pivots(ws)
+                except Exception:  # noqa: BLE001
+                    pass
 
             # -- Named ranges -------------------------------------------------
             if config.include_named_ranges:

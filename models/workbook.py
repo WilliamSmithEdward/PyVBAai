@@ -42,6 +42,13 @@ class CellData:
 
 
 @dataclass
+class ChartData:
+    chart_type: str   # "bar", "col", "line", "pie", "doughnut", "scatter", "area", "radar", etc.
+    title: str        # chart title, or "" if untitled
+    anchor: str       # top-left cell, e.g. "E2", or "" if unknown
+
+
+@dataclass
 class SheetData:
     index: int
     name: str
@@ -51,6 +58,8 @@ class SheetData:
     cells: dict[str, CellData] = field(default_factory=dict)
     visible: bool = True
     area_addresses: list[str] = field(default_factory=list)
+    charts: list[ChartData] = field(default_factory=list)
+    pivot_tables: list[str] = field(default_factory=list)
 
 
 @dataclass
