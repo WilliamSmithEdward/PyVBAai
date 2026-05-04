@@ -51,7 +51,7 @@ preview before anything changes.
 
 ### Option B — build from source
 ```bat
-git clone https://github.com/YourName/PyVBAai.git
+git clone https://github.com/WilliamSmithEdward/PyVBAai.git
 cd PyVBAai
 build.bat
 :: Output: dist\PyVBAai.exe
