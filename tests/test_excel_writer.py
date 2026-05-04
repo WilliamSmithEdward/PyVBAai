@@ -26,12 +26,15 @@ from core.excel_writer import (
     _delete_named_range,
     _delete_sheet,
     _dispatch_openpyxl,
+    _expand_flags,
     _get_openpyxl_sheet,
     _merge_cells,
     _move_sheet,
     _rename_sheet,
     _set_cell,
+    _set_format,
     _set_range,
+    _to_argb,
     _unmerge_cells,
 )
 from models.conversation import Change
@@ -330,3 +333,60 @@ class TestDispatchOpenpyxl:
             _dispatch_openpyxl(owb, change)
         except ApplyError as exc:
             assert "Unknown change type" not in str(exc)
+
+
+class TestToArgb:
+    def test_6_char_prefixed(self):
+        assert _to_argb("FF0000") == "FFFF0000"
+
+    def test_8_char_unchanged(self):
+        assert _to_argb("FFFF0000") == "FFFF0000"
+
+    def test_lowercase_normalised(self):
+        assert _to_argb("ff0000") == "FFFF0000"
+
+    def test_hash_prefix_stripped(self):
+        assert _to_argb("#92D050") == "FF92D050"
+
+    def test_invalid_raises(self):
+        with pytest.raises(ValueError):
+            _to_argb("XYZ")
+
+    def test_too_short_raises(self):
+        with pytest.raises(ValueError):
+            _to_argb("F00")
+
+
+class TestExpandFlagsColors:
+    def test_tilde_flag_normalised_to_argb(self):
+        result = _expand_flags({"flags": "~92D050"})
+        assert result["bg_color"] == "FF92D050"
+
+    def test_caret_flag_normalised_to_argb(self):
+        result = _expand_flags({"flags": "^FF0000"})
+        assert result["font_color"] == "FFFF0000"
+
+    def test_explicit_6char_color_normalised(self):
+        result = _expand_flags({"bg_color": "D9E1F2"})
+        assert result["bg_color"] == "FFD9E1F2"
+
+    def test_explicit_8char_color_unchanged(self):
+        result = _expand_flags({"font_color": "FF123456"})
+        assert result["font_color"] == "FF123456"
+
+
+class TestSetFormatColors:
+    def test_bg_color_applied(self, owb):
+        ws = owb.active
+        _set_format(owb, {"sheet": ws.title, "range": "A1", "bg_color": "92D050"})
+        assert ws["A1"].fill.fgColor.rgb[-6:] == "92D050"
+
+    def test_font_color_applied(self, owb):
+        ws = owb.active
+        _set_format(owb, {"sheet": ws.title, "range": "A1", "font_color": "FF0000"})
+        assert ws["A1"].font.color.rgb[-6:] == "FF0000"
+
+    def test_set_cell_with_color_flag(self, owb):
+        ws = owb.active
+        _set_cell(owb, {"sheet": ws.title, "cell": "B1", "value": "x", "flags": "~92D050"})
+        assert ws["B1"].fill.fgColor.rgb[-6:] == "92D050"

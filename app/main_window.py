@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import os
 
-from PySide6.QtCore import QSettings, Qt, QTimer
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QDragEnterEvent, QDropEvent
 from PySide6.QtWidgets import (
     QApplication,
@@ -311,11 +311,13 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(200, self._show_preview)
         else:
             self._chat.add_message(response.message, "assistant")
+            self._chat.focus_input()
 
     def _on_ai_error(self, err: str) -> None:
         self._chat.hide_typing()
         self._chat.set_input_enabled(True)
         self._chat.add_message(f"**AI Error:**\n\n{err}", "system")
+        self._chat.focus_input()
 
     # ── Preview & Apply ────────────────────────────────────────────────────────
 
@@ -403,8 +405,9 @@ class MainWindow(QMainWindow):
         self._wb_panel.set_accent("#89b4fa" if self._dark_mode else "#1e66f5")
 
     def _toggle_theme(self) -> None:
+        from app.config import get_settings
         self._dark_mode = not self._dark_mode
-        QSettings().setValue("appearance/dark_mode", self._dark_mode)
+        get_settings().setValue("appearance/dark_mode", self._dark_mode)
         self._apply_current_theme()
 
     # ── Status bar ─────────────────────────────────────────────────────────────

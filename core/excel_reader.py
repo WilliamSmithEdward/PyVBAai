@@ -207,81 +207,81 @@ def read_workbook(file_path: str, config: ContextConfig | None = None) -> Workbo
             keep_vba=True,
             keep_links=False,
         )
+        try:
+            # -- Sheets -----------------------------------------------------------
+            for idx, ws in enumerate(owb.worksheets):
+                visible = ws.sheet_state == "visible"
 
-        # -- Sheets -----------------------------------------------------------
-        for idx, ws in enumerate(owb.worksheets):
-            visible = ws.sheet_state == "visible"
-
-            if (
-                config.included_sheets is not None
-                and ws.title not in config.included_sheets
-            ):
-                wb_data.sheets.append(SheetData(
-                    index=idx, name=ws.title,
-                    used_range_address="", row_count=0, col_count=0,
-                    visible=visible,
-                ))
-                continue
-
-            min_row = ws.min_row or 1
-            min_col = ws.min_column or 1
-            max_row = ws.max_row or 0
-            max_col = min(ws.max_column or 0, _MAX_COLS_HARD)
-            row_count = max(0, max_row - min_row + 1) if max_row else 0
-            col_count = max(0, max_col - min_col + 1) if max_col else 0
-
-            if max_row and max_col:
-                used_addr = (
-                    f"${col_letter(min_col)}${min_row}"
-                    f":${col_letter(max_col)}${max_row}"
-                )
-            else:
-                used_addr = ""
-
-            sheet_data = SheetData(
-                index=idx,
-                name=ws.title,
-                used_range_address=used_addr,
-                row_count=row_count,
-                col_count=col_count,
-                visible=visible,
-            )
-
-            if max_row and max_col:
-                for row in ws.iter_rows(
-                    min_row=min_row, max_row=max_row,
-                    min_col=min_col, max_col=max_col,
+                if (
+                    config.included_sheets is not None
+                    and ws.title not in config.included_sheets
                 ):
-                    for cell in row:
-                        if cell.value is None:
-                            continue
-                        r, c = cell.row, cell.column
-                        addr = cell_address(r, c)
-                        formula = ""
-                        value = cell.value
-                        if isinstance(value, str) and value.startswith("="):
-                            formula = value
-                            value = None
-                        sheet_data.cells[addr] = CellData(
-                            row=r, col=c, address=addr,
-                            value=value, formula=formula,
-                            fmt=_cell_format(cell),
-                        )
+                    wb_data.sheets.append(SheetData(
+                        index=idx, name=ws.title,
+                        used_range_address="", row_count=0, col_count=0,
+                        visible=visible,
+                    ))
+                    continue
 
-            wb_data.sheets.append(sheet_data)
-            sheet_data.area_addresses = _connected_area_addresses(sheet_data.cells)
+                min_row = ws.min_row or 1
+                min_col = ws.min_column or 1
+                max_row = ws.max_row or 0
+                max_col = min(ws.max_column or 0, _MAX_COLS_HARD)
+                row_count = max(0, max_row - min_row + 1) if max_row else 0
+                col_count = max(0, max_col - min_col + 1) if max_col else 0
 
-        # -- Named ranges -----------------------------------------------------
-        if config.include_named_ranges:
-            for defn in owb.defined_names:
-                try:
-                    wb_data.named_ranges.append(
-                        NamedRange(name=defn.name, refers_to=defn.value)
+                if max_row and max_col:
+                    used_addr = (
+                        f"${col_letter(min_col)}${min_row}"
+                        f":${col_letter(max_col)}${max_row}"
                     )
-                except Exception:  # noqa: BLE001
-                    pass
+                else:
+                    used_addr = ""
 
-        owb.close()
+                sheet_data = SheetData(
+                    index=idx,
+                    name=ws.title,
+                    used_range_address=used_addr,
+                    row_count=row_count,
+                    col_count=col_count,
+                    visible=visible,
+                )
+
+                if max_row and max_col:
+                    for row in ws.iter_rows(
+                        min_row=min_row, max_row=max_row,
+                        min_col=min_col, max_col=max_col,
+                    ):
+                        for cell in row:
+                            if cell.value is None:
+                                continue
+                            r, c = cell.row, cell.column
+                            addr = cell_address(r, c)
+                            formula = ""
+                            value = cell.value
+                            if isinstance(value, str) and value.startswith("="):
+                                formula = value
+                                value = None
+                            sheet_data.cells[addr] = CellData(
+                                row=r, col=c, address=addr,
+                                value=value, formula=formula,
+                                fmt=_cell_format(cell),
+                            )
+
+                wb_data.sheets.append(sheet_data)
+                sheet_data.area_addresses = _connected_area_addresses(sheet_data.cells)
+
+            # -- Named ranges -------------------------------------------------
+            if config.include_named_ranges:
+                for defn in owb.defined_names:
+                    try:
+                        wb_data.named_ranges.append(
+                            NamedRange(name=defn.name, refers_to=defn.value)
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass
+        finally:
+            owb.close()
 
         # -- VBA source code -- COM path (xlsm/xlam only) ---------------------
         ext = os.path.splitext(file_path)[1].lower()

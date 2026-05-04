@@ -62,30 +62,33 @@ def apply_changes(file_path: str, changes: list[Change]) -> str:
     if other_changes or has_vba_changes:
         import openpyxl
         owb = openpyxl.load_workbook(file_path, keep_vba=True, keep_links=False)
-        for change in other_changes:
-            _dispatch_openpyxl(owb, change)
+        try:
+            for change in other_changes:
+                _dispatch_openpyxl(owb, change)
 
-        if has_vba_changes and is_xlsx:
-            # Save to temp dir first (OneDrive / network share safe)
-            tmp_dir = tempfile.mkdtemp()
-            try:
-                tmp_path = os.path.join(tmp_dir, os.path.basename(saved_path))
-                owb.save(tmp_path)
-                shutil.move(tmp_path, saved_path)
-            finally:
-                shutil.rmtree(tmp_dir, ignore_errors=True)
-            try:
-                os.remove(file_path)
-            except OSError:
-                pass
-        else:
-            tmp_dir = tempfile.mkdtemp()
-            try:
-                tmp_path = os.path.join(tmp_dir, os.path.basename(saved_path))
-                owb.save(tmp_path)
-                shutil.move(tmp_path, saved_path)
-            finally:
-                shutil.rmtree(tmp_dir, ignore_errors=True)
+            if has_vba_changes and is_xlsx:
+                # Save to temp dir first (OneDrive / network share safe)
+                tmp_dir = tempfile.mkdtemp()
+                try:
+                    tmp_path = os.path.join(tmp_dir, os.path.basename(saved_path))
+                    owb.save(tmp_path)
+                    shutil.move(tmp_path, saved_path)
+                finally:
+                    shutil.rmtree(tmp_dir, ignore_errors=True)
+                try:
+                    os.remove(file_path)
+                except OSError:
+                    pass
+            else:
+                tmp_dir = tempfile.mkdtemp()
+                try:
+                    tmp_path = os.path.join(tmp_dir, os.path.basename(saved_path))
+                    owb.save(tmp_path)
+                    shutil.move(tmp_path, saved_path)
+                finally:
+                    shutil.rmtree(tmp_dir, ignore_errors=True)
+        finally:
+            owb.close()
 
     # ── Step 2: COM for VBA-only changes ─────────────────────────────────────
     if vba_changes:
@@ -125,16 +128,42 @@ _ALL_FMT_KEYS = frozenset({
     "border_top", "border_bottom", "border_left", "border_right",
 })
 
+_COLOR_KEYS = frozenset({"font_color", "bg_color"})
+
+
+def _to_argb(color: str) -> str:
+    """Ensure a color string is 8-char ARGB (openpyxl requirement).
+
+    Accepts 6-char RGB ('FF0000') or 8-char ARGB ('FFFF0000').
+    Raises ValueError for anything else so the problem surfaces immediately.
+    """
+    c = color.strip().upper().lstrip("#")
+    if len(c) == 6:
+        return f"FF{c}"
+    if len(c) == 8:
+        return c
+    raise ValueError(f"Invalid color value {color!r}: expected 6 or 8 hex chars")
+
+
+def _normalize_colors(p: dict) -> dict:
+    """Return a copy of p with all color keys normalised to 8-char ARGB."""
+    out = dict(p)
+    for key in _COLOR_KEYS:
+        if key in out:
+            out[key] = _to_argb(out[key])
+    return out
+
 
 def _expand_flags(p: dict) -> dict:
     """Parse compact 'flags' string into format kwargs and merge with p.
 
     The AI may send: {"type":"set_cell",...,"flags":"B,#$#,##0,bt:thin,~D9E1F2"}
     which is equivalent to explicit keys bold=True, number_format="$#,##0", etc.
+    Colors are normalised to 8-char ARGB at parse time.
     """
     flags_str = p.get("flags")
     if not flags_str:
-        return p
+        return _normalize_colors(p)
     extra: dict = {}
     for flag in str(flags_str).split(","):
         flag = flag.strip()
@@ -145,9 +174,9 @@ def _expand_flags(p: dict) -> dict:
         elif flag.startswith("#"):
             extra["number_format"] = flag[1:]
         elif flag.startswith("^"):
-            extra["font_color"] = flag[1:]
+            extra["font_color"] = _to_argb(flag[1:])
         elif flag.startswith("~"):
-            extra["bg_color"] = flag[1:]
+            extra["bg_color"] = _to_argb(flag[1:])
         elif flag.startswith("fn:"):
             extra["font_name"] = flag[3:]
         elif flag.startswith("fs:"):
@@ -167,7 +196,7 @@ def _expand_flags(p: dict) -> dict:
             extra["border_left"] = flag[3:]
         elif flag.startswith("br:"):
             extra["border_right"] = flag[3:]
-    result = {**p, **extra}
+    result = {**_normalize_colors(p), **extra}
     result.pop("flags", None)
     return result
 
@@ -320,6 +349,7 @@ def _set_format(owb: Any, p: dict) -> None:
             cell.number_format = p["number_format"]
         if any(k in p for k in ("bold", "italic", "strikethrough", "underline", "font_name", "font_size", "font_color")):
             existing = cell.font or Font()
+            fc = p.get("font_color")  # already ARGB from _expand_flags / _normalize_colors
             cell.font = Font(
                 bold=p.get("bold", existing.bold),
                 italic=p.get("italic", existing.italic),
@@ -327,10 +357,10 @@ def _set_format(owb: Any, p: dict) -> None:
                 underline="single" if p.get("underline", existing.underline) else None,
                 name=p.get("font_name", existing.name),
                 size=p.get("font_size", existing.size),
-                color=p["font_color"] if "font_color" in p else (existing.color or None),
+                color=fc if fc is not None else (existing.color or None),
             )
         if "bg_color" in p:
-            cell.fill = PatternFill(fill_type="solid", fgColor=p["bg_color"])
+            cell.fill = PatternFill(fill_type="solid", fgColor=p["bg_color"])  # already ARGB
         if any(k in p for k in ("h_align", "v_align", "wrap_text")):
             existing_a = cell.alignment or Alignment()
             cell.alignment = Alignment(

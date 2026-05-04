@@ -24,19 +24,25 @@ from models.conversation import AIResponse, Change
 
 # ── icons / labels per operation type ─────────────────────────────────────────
 _OP_META: dict[str, tuple[str, str]] = {
-    "set_cell":          ("", "Set Cell"),
-    "set_range":         ("", "Set Range"),
-    "clear_range":       ("", "Clear Range"),
-    "add_sheet":         ("", "Add Sheet"),
-    "delete_sheet":      ("", "Delete Sheet"),
-    "rename_sheet":      ("", "Rename Sheet"),
-    "move_sheet":        ("", "Move Sheet"),
-    "copy_sheet":        ("", "Copy Sheet"),
-    "set_vba":           ("", "Update VBA Module"),
-    "add_vba_module":    ("", "Add VBA Module"),
-    "delete_vba_module": ("", "Delete VBA Module"),
-    "add_named_range":   ("", "Add Named Range"),
-    "delete_named_range":("", "Delete Named Range"),
+    "set_cell":           ("", "Set Cell"),
+    "set_range":          ("", "Set Range"),
+    "set_format":         ("", "Format Range"),
+    "clear_range":        ("", "Clear Range"),
+    "add_sheet":          ("", "Add Sheet"),
+    "delete_sheet":       ("", "Delete Sheet"),
+    "rename_sheet":       ("", "Rename Sheet"),
+    "move_sheet":         ("", "Move Sheet"),
+    "copy_sheet":         ("", "Copy Sheet"),
+    "hide_sheet":         ("", "Hide Sheet"),
+    "unhide_sheet":       ("", "Unhide Sheet"),
+    "merge_cells":        ("", "Merge Cells"),
+    "unmerge_cells":      ("", "Unmerge Cells"),
+    "set_vba":            ("", "Update VBA Module"),
+    "add_vba_module":     ("", "Add VBA Module"),
+    "delete_vba_module":  ("", "Delete VBA Module"),
+    "set_named_range":    ("", "Set Named Range"),
+    "add_named_range":    ("", "Add Named Range"),
+    "delete_named_range": ("", "Delete Named Range"),
 }
 
 
@@ -89,32 +95,42 @@ class ChangeCard(QFrame):
             layout.addWidget(diff_view)
 
 
-def _format_details(op: str, p: dict) -> str:
+def _format_details(op: str, p: dict) -> str:  # noqa: PLR0911
     if op == "set_cell":
         loc = f"{p.get('sheet','')}!{p.get('cell','')}"
         val = p.get("formula") or repr(p.get("value", ""))
-        return f"Location: {loc} -> {val}"
+        return f"Location: {loc}  →  {val}"
     if op == "set_range":
-        return f"Range: {p.get('sheet','')}!{p.get('range','')}  ({len(p.get('values', []))} rows)"
+        rows = len(p.get("values", []))
+        cols = len(p.get("values", [[]])[0]) if p.get("values") else 0
+        return f"Sheet: {p.get('sheet','')}   Range: {p.get('range','')}   ({rows}×{cols} values)"
+    if op == "set_format":
+        rng = f"{p.get('sheet','')}!{p.get('range','')}"
+        keys = [k for k in p if k not in ("type", "sheet", "range")]
+        return f"Range: {rng}   Fields: {', '.join(keys)}"
     if op == "clear_range":
-        return f"Range: {p.get('sheet','')}!{p.get('range','')}"
+        return f"Sheet: {p.get('sheet','')}   Range: {p.get('range','')}"
     if op == "add_sheet":
-        return f"Name: {p.get('name','')}  at position {p.get('position','end')}"
+        return f"Name: {p.get('name','')}   position: {p.get('position', 'end')}"
     if op == "delete_sheet":
         return f"Sheet: {p.get('name','')}"
     if op == "rename_sheet":
-        return f"{p.get('old_name','')} -> {p.get('new_name','')}"
+        return f"{p.get('old_name','')}  →  {p.get('new_name','')}"
     if op == "move_sheet":
-        return f"Sheet '{p.get('name','')}' to position {p.get('position','')}"
+        return f"Sheet: {p.get('name','')}   →  position {p.get('position','')}"
     if op == "copy_sheet":
-        return f"'{p.get('source','')}' -> '{p.get('dest','')}' at position {p.get('position','end')}"
+        return f"'{p.get('source','')}' → '{p.get('dest','')}' at position {p.get('position', 'end')}"
+    if op in ("hide_sheet", "unhide_sheet"):
+        return f"Sheet: {p.get('name','')}"
+    if op in ("merge_cells", "unmerge_cells"):
+        return f"Sheet: {p.get('sheet','')}   Range: {p.get('range','')}"
     if op in ("set_vba", "add_vba_module"):
         lines = len((p.get("code") or "").splitlines())
-        return f"Module: {p.get('module') or p.get('name','')}  ({lines} lines)"
+        return f"Module: {p.get('module') or p.get('name','')}   ({lines} lines)"
     if op == "delete_vba_module":
         return f"Module: {p.get('name','')}"
-    if op == "add_named_range":
-        return f"{p.get('name','')} = {p.get('refers_to','')}"
+    if op in ("set_named_range", "add_named_range"):
+        return f"{p.get('name','')}  =  {p.get('refers_to','')}"
     if op == "delete_named_range":
         return f"Name: {p.get('name','')}"
     return ""

@@ -8,8 +8,7 @@ import pathlib
 import tempfile
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QBrush, QColor, QPainter, QPen
-from PySide6.QtGui import QPalette
+from PySide6.QtGui import QBrush, QColor, QPainter, QPalette, QPen
 from PySide6.QtWidgets import (
     QApplication,
     QProxyStyle,
@@ -177,14 +176,15 @@ QTreeWidget::branch { background: transparent; }
 
 /* User bubble */
 #userBubble {
-    background-color: #89b4fa;
+    background-color: #1e2e4a;
     border-radius: 14px;
 }
 #userBubble QTextBrowser {
     background-color: transparent;
-    color: #1e1e2e;
+    color: #c8d8f0;
     border: none;
     font-size: 13px;
+    font-weight: 500;
 }
 
 /* AI bubble */
@@ -234,23 +234,23 @@ QTreeWidget::branch { background: transparent; }
 
 /* ── Buttons ────────────────────────────────────────────────────────── */
 QPushButton {
-    background-color: #89b4fa;
-    color: #1e1e2e;
+    background-color: #2a4a8a;
+    color: #c8d8f0;
     border: none;
     border-radius: 8px;
     padding: 8px 18px;
     font-weight: 600;
     font-size: 13px;
 }
-QPushButton:hover   { background-color: #b4befe; }
-QPushButton:pressed { background-color: #7287fd; }
+QPushButton:hover   { background-color: #345aa0; }
+QPushButton:pressed { background-color: #1e3870; }
 QPushButton:disabled { background-color: #313244; color: #6c7086; }
 
 QPushButton#dangerBtn {
-    background-color: #f38ba8;
-    color: #1e1e2e;
+    background-color: #7a2535;
+    color: #f2b8c0;
 }
-QPushButton#dangerBtn:hover { background-color: #eba0ac; }
+QPushButton#dangerBtn:hover { background-color: #922d40; }
 
 QPushButton#secondaryBtn {
     background-color: #45475a;
@@ -260,10 +260,10 @@ QPushButton#secondaryBtn:hover { background-color: #585b70; }
 
 QPushButton#ghostBtn {
     background-color: transparent;
-    color: #89b4fa;
-    border: 1px solid #89b4fa;
+    color: #8aaad8;
+    border: 1px solid #3a5a9a;
 }
-QPushButton#ghostBtn:hover { background-color: #313244; }
+QPushButton#ghostBtn:hover { background-color: #1e2e4a; }
 
 /* ── ComboBox ───────────────────────────────────────────────────────── */
 QComboBox {
