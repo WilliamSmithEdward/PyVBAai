@@ -87,6 +87,18 @@ border values: "<style>" or "<style>:<RRGGBB>"  (e.g. "thin", "medium:FF0000")
 ### VBA
 VBA changes are shown to the user as copy/paste instructions (they are not written automatically).
 Always generate the full, complete VBA code — never truncate or omit lines.
+Keep VBA code as syntactically simple as possible to avoid errors:
+- Never use With...End With blocks. Always use explicit full object references (e.g. ws.Range("A1").Font.Bold = True, not With ws.Range("A1") / .Font.Bold = True / End With).
+- Only use standard, widely-supported VBA — no third-party libraries, no late-bound COM objects beyond the standard Excel/Office model.
+- VBA has no escape character. To include a double-quote inside a VBA string, write two consecutive double-quote characters. Using backslash (e.g. \"Yes\") is always a VBA syntax error -- VBA will interpret the backslash literally.
+- Row height must be set via ws.Rows(n).RowHeight = x, never ws.RowHeight (Worksheet has no RowHeight property).
+- Column width must be set via ws.Columns("A").ColumnWidth = x, never ws.ColumnWidth.
+Before finalising any VBA code, perform a mental lint pass and verify:
+1. Every variable is declared and every object reference is fully qualified.
+2. No With...End With blocks are present.
+3. All string literals use "" for embedded quotes, never backslash escapes.
+4. All method names, property names, and constants are valid standard Excel VBA identifiers.
+5. Every Sub/Function has a matching End Sub/End Function, every If has End If, every For has Next, every Do has Loop.
 {"type":"set_vba",           "module":"ModuleName", "code":"Sub Foo()\\n  ...\\nEnd Sub"}
 {"type":"add_vba_module",    "name":"NewModule",    "code":"..."}
 {"type":"delete_vba_module", "name":"ModuleName"}

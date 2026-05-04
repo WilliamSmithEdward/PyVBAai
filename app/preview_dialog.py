@@ -99,7 +99,7 @@ class ChangeCard(QFrame):
             diff_html = _make_vba_diff(old_vba or "", p["code"])
             btn = QPushButton("Show code summary")
             btn.setObjectName("ghostBtn")
-            btn.setFixedWidth(155)
+            btn.setFixedWidth(210)
             diff_view = QTextBrowser()
             diff_view.setObjectName("codeViewer")
             diff_view.setHtml(diff_html)
@@ -292,7 +292,7 @@ class PreviewDialog(QDialog):
             banner.setWordWrap(True)
             banner.setTextFormat(Qt.TextFormat.RichText)
             banner.setStyleSheet(
-                "background: #92400e; color: #fef3c7; "
+                "background: #5c2d0a; color: #fde68a; "
                 "border-radius: 6px; padding: 10px 14px; font-size: 13px;"
             )
             cards_layout.addWidget(banner)

@@ -271,6 +271,13 @@ class MainWindow(QMainWindow):
             self._pending_user_message = None
             self._on_user_message(msg)
 
+        # If a write just completed and there are pending VBA changes, show
+        # the dialog now that the workbook has fully reloaded.
+        pending_vba = getattr(self, "_pending_vba_changes", [])
+        if pending_vba:
+            self._pending_vba_changes = []
+            self._show_vba_dialog(pending_vba)
+
     def _on_reader_error(self, err: str) -> None:
         self._chat.add_message(f"**Failed to load workbook:**\n\n{err}", "system")
         self._status_file_lbl.setText("  Load failed")
@@ -395,11 +402,12 @@ class MainWindow(QMainWindow):
         self._pending_response = None
         if self._wb:
             self.load_file(saved_path)
-        # Show VBA dialog after non-VBA changes are written
-        pending_vba = getattr(self, "_pending_vba_changes", [])
-        if pending_vba:
-            self._pending_vba_changes = []
-            self._show_vba_dialog(pending_vba)
+        else:
+            # No workbook to reload — show VBA dialog immediately if needed
+            pending_vba = getattr(self, "_pending_vba_changes", [])
+            if pending_vba:
+                self._pending_vba_changes = []
+                self._show_vba_dialog(pending_vba)
 
     def _show_vba_dialog(self, vba_changes: list) -> None:
         self._chat.add_message(

@@ -285,37 +285,30 @@ def _make_app_icon():
     bg_path.addRoundedRect(QRectF(0, 0, size, size), 52, 52)
     p.fillPath(bg_path, QBrush(QColor("#1e1e2e")))
 
-    # White page body with rounded corners
-    margin = 52
+    # Page body with clearly rounded corners (no fold - too small to read at icon sizes)
+    margin = 50
     page_w = size - margin * 2
-    page_h = int(page_w * 1.25)
+    page_h = int(page_w * 1.28)
     page_x = margin
-    page_y = (size - page_h) // 2 + 4
+    page_y = (size - page_h) // 2 + 2
+    page_r = 26
     page_path = QPainterPath()
-    page_path.addRoundedRect(QRectF(page_x, page_y, page_w, page_h), 14, 14)
+    page_path.addRoundedRect(QRectF(page_x, page_y, page_w, page_h), page_r, page_r)
     p.fillPath(page_path, QBrush(QColor("#e8e8f4")))
 
-    # Folded corner (top-right)
-    fold = 28
-    fold_path = QPainterPath()
-    fold_path.moveTo(page_x + page_w - fold, page_y)
-    fold_path.lineTo(page_x + page_w, page_y + fold)
-    fold_path.lineTo(page_x + page_w - fold, page_y + fold)
-    fold_path.closeSubpath()
-    p.fillPath(fold_path, QBrush(QColor("#a0a0c0")))
-
-    # Three text lines (green dots representing cells)
+    # Three text lines
     dot_color = QBrush(QColor("#89b4fa"))
-    line_start_x = page_x + 16
-    line_y_start = page_y + fold + 18
-    line_gap = 18
-    line_w_long = page_w - 32
-    line_w_short = int(line_w_long * 0.6)
-    dot_h = 7
+    h_pad = 42
+    line_start_x = page_x + h_pad
+    line_y_start = page_y + 28
+    line_gap = 22
+    line_w_long = page_w - h_pad * 2
+    line_w_short = int(line_w_long * 0.55)
+    dot_h = 10
     for i, lw in enumerate([line_w_long, line_w_long, line_w_short]):
         ly = line_y_start + i * line_gap
         line_path = QPainterPath()
-        line_path.addRoundedRect(QRectF(line_start_x, ly, lw, dot_h), 3, 3)
+        line_path.addRoundedRect(QRectF(line_start_x, ly, lw, dot_h), 5, 5)
         p.fillPath(line_path, dot_color)
 
     p.end()

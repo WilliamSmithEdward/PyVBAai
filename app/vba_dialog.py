@@ -36,7 +36,7 @@ _OP_LABEL: dict[str, str] = {
 }
 
 _BANNER_STYLE = (
-    "background: #92400e; color: #fef3c7; border-radius: 8px; padding: 14px 18px;"
+    "background: #5c2d0a; color: #fde68a; border-radius: 8px; padding: 14px 18px;"
 )
 _STEP_STYLE = (
     "background: #1e3a5f; border: 2px solid #3b82f6; border-radius: 8px; padding: 14px;"
@@ -45,10 +45,10 @@ _DELETE_STEP_STYLE = (
     "background: #3b1f1f; border: 2px solid #ef4444; border-radius: 8px; padding: 14px;"
 )
 _COPY_BTN_STYLE = (
-    "QPushButton { background: #16a34a; color: #f0fdf4; font-weight: 700; "
+    "QPushButton { background: #166534; color: #dcfce7; font-weight: 700; "
     "font-size: 14px; border-radius: 6px; padding: 8px 20px; }"
-    "QPushButton:hover { background: #15803d; }"
-    "QPushButton:pressed { background: #166534; }"
+    "QPushButton:hover { background: #14532d; }"
+    "QPushButton:pressed { background: #052e16; }"
 )
 _COPIED_BTN_STYLE = (
     "QPushButton { background: #14532d; color: #bbf7d0; font-weight: 700; "
@@ -223,7 +223,7 @@ class VBADialog(QDialog):
         copy_btn = QPushButton("[Copy]  Copy Code")
         copy_btn.setStyleSheet(_COPY_BTN_STYLE)
         copy_btn.setFixedHeight(40)
-        copy_btn.setFixedWidth(160)
+        copy_btn.setFixedWidth(200)
         copy_btn.clicked.connect(lambda checked=False, b=copy_btn, c=code: self._copy(b, c))
         copy_row = QHBoxLayout()
         copy_row.addWidget(copy_btn)
