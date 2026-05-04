@@ -107,6 +107,9 @@ def _cell_format(cell: Any) -> CellFormat | None:
         if font.underline and font.underline != "none":
             fmt.underline = True
             changed = True
+        if getattr(font, "strike", None):
+            fmt.strikethrough = True
+            changed = True
         if font.name and font.name != "Calibri":
             fmt.font_name = font.name
             changed = True
@@ -151,6 +154,27 @@ def _cell_format(cell: Any) -> CellFormat | None:
     if protection and not protection.locked:
         fmt.locked = False
         changed = True
+
+    border = getattr(cell, "border", None)
+    if border:
+        for side_attr, field_name in (
+            ("top",    "border_top"),
+            ("bottom", "border_bottom"),
+            ("left",   "border_left"),
+            ("right",  "border_right"),
+        ):
+            side = getattr(border, side_attr, None)
+            if side and side.border_style:
+                val = side.border_style
+                try:
+                    rgb = side.color.rgb if side.color else None
+                    if rgb and rgb not in ("FF000000", "00000000"):
+                        hex_c = rgb[2:] if len(rgb) == 8 else rgb
+                        val += f":{hex_c}"
+                except Exception:  # noqa: BLE001
+                    pass
+                setattr(fmt, field_name, val)
+                changed = True
 
     return fmt if changed else None
 
@@ -286,7 +310,7 @@ def _read_vba_via_com(
     com_wb = None
     try:
         excel = win32.DispatchEx("Excel.Application")
-        excel.Visible = True   # must be visible during Open -- headless blocks on OneDrive sync
+        excel.Visible = False
         excel.DisplayAlerts = False
         excel.ScreenUpdating = False
         excel.EnableEvents = False
@@ -301,7 +325,6 @@ def _read_vba_via_com(
             file_path, UpdateLinks=False, ReadOnly=True,
             IgnoreReadOnlyRecommended=True,
         )
-        excel.Visible = False
 
         type_map = {1: "Module", 2: "Class", 3: "Form", 100: "Document"}
         for comp in com_wb.VBProject.VBComponents:

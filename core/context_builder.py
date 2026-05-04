@@ -28,9 +28,13 @@ _AREA_ADDR_RE = re.compile(r'\$([A-Z]+)\$(\d+):\$([A-Z]+)\$(\d+)')
 
 # Legend emitted once in the workbook header
 _CELL_LEGEND = (
-    "CELL NOTATION: R<row>: <col>=<val>[flags]  "
-    "flags: B=bold I=italic U=underline W=wrap "
-    "#<spec>=num_fmt ^<hex>=font_color ~<hex>=bg_color"
+    "CELL NOTATION: R<row>: <COL>=<val>[flags]  "
+    "val: \"str\" | number | {formula} | None\n"
+    "  flags: B=bold I=italic S=strikethrough U=underline W=wrap_text\n"
+    "         #<spec>=number_format  fn:<name>=font_name  fs:<pts>=font_size\n"
+    "         ^<RRGGBB>=font_color  ~<RRGGBB>=bg_color\n"
+    "         ha:<l|c|r>=h_align  va:<t|c|b>=v_align\n"
+    "         bt/bb/bl/br:<style>[:<RRGGBB>]=border (thin|medium|thick|dashed|dotted|double|hair)"
 )
 
 
@@ -89,8 +93,16 @@ def _fmt_hints(fmt: CellFormat, include: set[str]) -> list[str]:
         hints.append("B")
     if "italic" in include and fmt.italic:
         hints.append("I")
+    if "strikethrough" in include and fmt.strikethrough:
+        hints.append("S")
     if "underline" in include and fmt.underline:
         hints.append("U")
+    if "wrap_text" in include and fmt.wrap_text:
+        hints.append("W")
+    if "font_name" in include and fmt.font_name:
+        hints.append(f"fn:{fmt.font_name}")
+    if "font_size" in include and fmt.font_size:
+        hints.append(f"fs:{fmt.font_size:g}")
     if "font_color" in include and fmt.font_color:
         hints.append(f"^{fmt.font_color}")
     if "bg_color" in include and fmt.bg_color:
@@ -99,8 +111,14 @@ def _fmt_hints(fmt: CellFormat, include: set[str]) -> list[str]:
         hints.append(f"ha:{fmt.h_align[0]}")
     if "v_align" in include and fmt.v_align:
         hints.append(f"va:{fmt.v_align[0]}")
-    if "wrap_text" in include and fmt.wrap_text:
-        hints.append("W")
+    if "border_top" in include and fmt.border_top:
+        hints.append(f"bt:{fmt.border_top}")
+    if "border_bottom" in include and fmt.border_bottom:
+        hints.append(f"bb:{fmt.border_bottom}")
+    if "border_left" in include and fmt.border_left:
+        hints.append(f"bl:{fmt.border_left}")
+    if "border_right" in include and fmt.border_right:
+        hints.append(f"br:{fmt.border_right}")
     return hints
 
 

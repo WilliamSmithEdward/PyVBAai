@@ -107,6 +107,71 @@ def _dispatch_openpyxl(owb: Any, change: Change) -> None:
     handler(owb, change.params)
 
 
+# ── compact-flag helpers (AI write-back syntax) ──────────────────────────────
+
+_FLAG_BOOL: dict[str, str] = {
+    "B": "bold", "I": "italic", "S": "strikethrough",
+    "U": "underline", "W": "wrap_text",
+}
+_FLAG_H_ALIGN: dict[str, str] = {
+    "l": "left", "c": "center", "r": "right", "f": "fill", "j": "justify",
+}
+_FLAG_V_ALIGN: dict[str, str] = {"t": "top", "c": "center", "b": "bottom"}
+
+_ALL_FMT_KEYS = frozenset({
+    "bold", "italic", "strikethrough", "underline", "wrap_text",
+    "number_format", "font_name", "font_size", "font_color", "bg_color",
+    "h_align", "v_align",
+    "border_top", "border_bottom", "border_left", "border_right",
+})
+
+
+def _expand_flags(p: dict) -> dict:
+    """Parse compact 'flags' string into format kwargs and merge with p.
+
+    The AI may send: {"type":"set_cell",...,"flags":"B,#$#,##0,bt:thin,~D9E1F2"}
+    which is equivalent to explicit keys bold=True, number_format="$#,##0", etc.
+    """
+    flags_str = p.get("flags")
+    if not flags_str:
+        return p
+    extra: dict = {}
+    for flag in str(flags_str).split(","):
+        flag = flag.strip()
+        if not flag:
+            continue
+        if flag in _FLAG_BOOL:
+            extra[_FLAG_BOOL[flag]] = True
+        elif flag.startswith("#"):
+            extra["number_format"] = flag[1:]
+        elif flag.startswith("^"):
+            extra["font_color"] = flag[1:]
+        elif flag.startswith("~"):
+            extra["bg_color"] = flag[1:]
+        elif flag.startswith("fn:"):
+            extra["font_name"] = flag[3:]
+        elif flag.startswith("fs:"):
+            try:
+                extra["font_size"] = float(flag[3:])
+            except ValueError:
+                pass
+        elif flag.startswith("ha:"):
+            extra["h_align"] = _FLAG_H_ALIGN.get(flag[3:], flag[3:])
+        elif flag.startswith("va:"):
+            extra["v_align"] = _FLAG_V_ALIGN.get(flag[3:], flag[3:])
+        elif flag.startswith("bt:"):
+            extra["border_top"] = flag[3:]
+        elif flag.startswith("bb:"):
+            extra["border_bottom"] = flag[3:]
+        elif flag.startswith("bl:"):
+            extra["border_left"] = flag[3:]
+        elif flag.startswith("br:"):
+            extra["border_right"] = flag[3:]
+    result = {**p, **extra}
+    result.pop("flags", None)
+    return result
+
+
 # ── cell helpers ──────────────────────────────────────────────────────────────
 
 def _get_openpyxl_sheet(owb: Any, name: str) -> Any:
@@ -117,15 +182,21 @@ def _get_openpyxl_sheet(owb: Any, name: str) -> Any:
 
 
 def _set_cell(owb: Any, p: dict) -> None:
+    p = _expand_flags(p)
     ws = _get_openpyxl_sheet(owb, p["sheet"])
     cell = ws[p["cell"]]
     if "formula" in p:
         cell.value = p["formula"]
     else:
         cell.value = p["value"]
+    # Apply any inline format keys
+    if _ALL_FMT_KEYS & p.keys():
+        _set_format(owb, {"sheet": p["sheet"], "range": p["cell"],
+                          **{k: p[k] for k in _ALL_FMT_KEYS if k in p}})
 
 
 def _set_range(owb: Any, p: dict) -> None:
+    p = _expand_flags(p)
     ws = _get_openpyxl_sheet(owb, p["sheet"])
     import openpyxl.utils
     rng = p["range"]
@@ -134,6 +205,10 @@ def _set_range(owb: Any, p: dict) -> None:
     for r_idx, row_data in enumerate(p["values"]):
         for c_idx, val in enumerate(row_data):
             ws.cell(row=min_row + r_idx, column=min_col_letter + c_idx, value=val)
+    # Apply any inline format to the entire range
+    if _ALL_FMT_KEYS & p.keys():
+        _set_format(owb, {"sheet": p["sheet"], "range": rng,
+                          **{k: p[k] for k in _ALL_FMT_KEYS if k in p}})
 
 
 def _clear_range(owb: Any, p: dict) -> None:
@@ -243,11 +318,12 @@ def _set_format(owb: Any, p: dict) -> None:
     for cell in cells:
         if "number_format" in p:
             cell.number_format = p["number_format"]
-        if any(k in p for k in ("bold", "italic", "underline", "font_name", "font_size", "font_color")):
+        if any(k in p for k in ("bold", "italic", "strikethrough", "underline", "font_name", "font_size", "font_color")):
             existing = cell.font or Font()
             cell.font = Font(
                 bold=p.get("bold", existing.bold),
                 italic=p.get("italic", existing.italic),
+                strike=p.get("strikethrough", existing.strike),
                 underline="single" if p.get("underline", existing.underline) else None,
                 name=p.get("font_name", existing.name),
                 size=p.get("font_size", existing.size),
@@ -261,6 +337,26 @@ def _set_format(owb: Any, p: dict) -> None:
                 horizontal=p.get("h_align", existing_a.horizontal),
                 vertical=p.get("v_align", existing_a.vertical),
                 wrap_text=p.get("wrap_text", existing_a.wrap_text),
+            )
+        if any(k in p for k in ("border_top", "border_bottom", "border_left", "border_right")):
+            from openpyxl.styles import Border, Side
+
+            def _make_side(spec: str, existing_side: Any) -> Any:
+                if not spec:
+                    return existing_side
+                parts = spec.split(":", 1)
+                style = parts[0]
+                color = parts[1] if len(parts) > 1 else "FF000000"
+                if len(color) == 6:
+                    color = "FF" + color
+                return Side(border_style=style, color=color)
+
+            existing_b = cell.border or Border()
+            cell.border = Border(
+                top=_make_side(p.get("border_top", ""), existing_b.top),
+                bottom=_make_side(p.get("border_bottom", ""), existing_b.bottom),
+                left=_make_side(p.get("border_left", ""), existing_b.left),
+                right=_make_side(p.get("border_right", ""), existing_b.right),
             )
 
 

@@ -156,26 +156,41 @@ class SettingsDialog(QDialog):
         # ordered label -> key pairs
         self._fmt_checks: dict[str, QCheckBox] = {}
         fmt_fields = [
-            ("number_format", "Number format  (e.g. 0.00%, dd/mm/yyyy)"),
-            ("bold",          "Bold"),
-            ("italic",        "Italic"),
-            ("underline",     "Underline"),
-            ("font_color",    "Font colour"),
-            ("bg_color",      "Background colour"),
-            ("h_align",       "Horizontal alignment"),
-            ("v_align",       "Vertical alignment"),
-            ("wrap_text",     "Wrap text"),
+            ("number_format",  "Number format"),
+            ("bold",           "Bold"),
+            ("italic",         "Italic"),
+            ("strikethrough",  "Strikethrough"),
+            ("underline",      "Underline"),
+            ("wrap_text",      "Wrap text"),
+            ("font_name",      "Font name"),
+            ("font_size",      "Font size"),
+            ("font_color",     "Font colour"),
+            ("bg_color",       "Background colour"),
+            ("h_align",        "H-align"),
+            ("v_align",        "V-align"),
+            ("border_top",     "Border top"),
+            ("border_bottom",  "Border bottom"),
+            ("border_left",    "Border left"),
+            ("border_right",   "Border right"),
         ]
         row1 = QHBoxLayout()
         row2 = QHBoxLayout()
+        row3 = QHBoxLayout()
         for i, (key, label) in enumerate(fmt_fields):
             cb = QCheckBox(label)
             self._fmt_checks[key] = cb
-            (row1 if i < 5 else row2).addWidget(cb)
+            if i < 6:
+                row1.addWidget(cb)
+            elif i < 12:
+                row2.addWidget(cb)
+            else:
+                row3.addWidget(cb)
         row1.addStretch()
         row2.addStretch()
+        row3.addStretch()
         fmt_layout.addLayout(row1)
         fmt_layout.addLayout(row2)
+        fmt_layout.addLayout(row3)
         layout.addWidget(fmt_group)
 
         note = QLabel(

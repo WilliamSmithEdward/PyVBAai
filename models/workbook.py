@@ -14,6 +14,7 @@ class CellFormat:
     number_format: str = ""          # e.g. "0.00", "dd/mm/yyyy", "$#,##0"
     bold: bool = False
     italic: bool = False
+    strikethrough: bool = False
     underline: bool = False
     font_name: str = ""              # e.g. "Calibri"
     font_size: float = 0.0
@@ -23,6 +24,11 @@ class CellFormat:
     v_align: str = ""                # "top", "center", "bottom"
     wrap_text: bool = False
     locked: bool = True
+    # Border sides: "<style>" or "<style>:<RRGGBB>"  (thin|medium|thick|dashed|dotted|double|hair)
+    border_top: str = ""
+    border_bottom: str = ""
+    border_left: str = ""
+    border_right: str = ""
 
 
 @dataclass
@@ -76,8 +82,12 @@ class WorkbookData:
 
 # All format field keys that can be included or excluded from context output.
 ALL_FMT_FIELDS: frozenset[str] = frozenset({
-    "number_format", "bold", "italic", "underline",
-    "font_color", "bg_color", "h_align", "v_align", "wrap_text",
+    "number_format",
+    "bold", "italic", "strikethrough", "underline",
+    "font_name", "font_size", "font_color",
+    "bg_color",
+    "h_align", "v_align", "wrap_text",
+    "border_top", "border_bottom", "border_left", "border_right",
 })
 
 
