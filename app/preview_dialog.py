@@ -40,6 +40,8 @@ _OP_META: dict[str, tuple[str, str]] = {
     "set_vba":            ("", "Update VBA Module"),
     "add_vba_module":     ("", "Add VBA Module"),
     "delete_vba_module":  ("", "Delete VBA Module"),
+    "create_table":        ("", "Create Table"),
+    "delete_table":        ("", "Delete Table"),
     "set_named_range":    ("", "Set Named Range"),
     "add_named_range":    ("", "Add Named Range"),
     "delete_named_range": ("", "Delete Named Range"),
@@ -129,6 +131,10 @@ def _format_details(op: str, p: dict) -> str:  # noqa: PLR0911
         return f"Module: {p.get('module') or p.get('name','')}   ({lines} lines)"
     if op == "delete_vba_module":
         return f"Module: {p.get('name','')}"
+    if op == "create_table":
+        return f"Sheet: {p.get('sheet','')}   Range: {p.get('range','')}   Name: {p.get('name','')}   Style: {p.get('style','TableStyleMedium9')}"
+    if op == "delete_table":
+        return f"Sheet: {p.get('sheet','')}   Name: {p.get('name','')}"
     if op in ("set_named_range", "add_named_range"):
         return f"{p.get('name','')}  =  {p.get('refers_to','')}"
     if op == "delete_named_range":
@@ -264,12 +270,29 @@ class PreviewDialog(QDialog):
         self.reject()
 
     def _on_revise(self) -> None:
-        from PySide6.QtWidgets import QInputDialog
-        note, ok = QInputDialog.getText(
-            self,
-            "Revise Request",
-            "Describe what to change about the proposed plan:",
+        from PySide6.QtWidgets import (
+            QDialog,
+            QDialogButtonBox,
+            QLabel,
+            QTextEdit,
+            QVBoxLayout,
         )
-        if ok and note.strip():
-            self.revise_requested.emit(note.strip())
-            self.reject()
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Revise Request")
+        dlg.setMinimumWidth(420)
+        layout = QVBoxLayout(dlg)
+        layout.addWidget(QLabel("Describe what to change about the proposed plan:"))
+        editor = QTextEdit()
+        editor.setFixedHeight(120)
+        editor.setAcceptRichText(False)
+        layout.addWidget(editor)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        layout.addWidget(buttons)
+        editor.setFocus()
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            note = editor.toPlainText().strip()
+            if note:
+                self.revise_requested.emit(note)
+                self.reject()

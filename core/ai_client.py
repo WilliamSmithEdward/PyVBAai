@@ -86,6 +86,12 @@ border values: "<style>" or "<style>:<RRGGBB>"  (e.g. "thin", "medium:FF0000")
 {"type":"add_vba_module",    "name":"NewModule",    "code":"..."}
 {"type":"delete_vba_module", "name":"ModuleName"}
 
+### Tables (Excel ListObject)
+{"type":"create_table", "sheet":"Sheet1", "range":"A1:D101", "name":"PostsTable", "style":"TableStyleMedium9"}
+{"type":"delete_table", "sheet":"Sheet1", "name":"PostsTable"}
+- "style" is optional (default TableStyleMedium9). Valid values: TableStyleLight1-21, TableStyleMedium1-28, TableStyleDark1-11.
+- When the user asks to create a table, list object, or structured table — always use create_table, NOT set_named_range.
+
 ### Named Ranges
 {"type":"set_named_range",    "name":"MyRange",  "refers_to":"Sheet1!$A$1:$D$10"}
 {"type":"delete_named_range", "name":"MyRange"}

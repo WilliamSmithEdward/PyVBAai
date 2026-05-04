@@ -294,6 +294,41 @@ def _unhide_sheet(owb: Any, p: dict) -> None:
     ws.sheet_state = "visible"
 
 
+# ── table operations ─────────────────────────────────────────────────────────
+
+def _create_table(owb: Any, p: dict) -> None:
+    """Create an Excel Table (ListObject) on a worksheet.
+
+    params: sheet, range, name (table display name), style (optional,
+    default 'TableStyleMedium9').
+    """
+    from openpyxl.worksheet.table import Table, TableStyleInfo
+    ws = _get_openpyxl_sheet(owb, p["sheet"])
+    table_name = p["name"]
+    # Remove existing table with same name if present (idempotent)
+    if table_name in {t.displayName for t in ws.tables.values()}:
+        del ws.tables[table_name]
+    style_name = p.get("style", "TableStyleMedium9")
+    tbl = Table(displayName=table_name, ref=p["range"])
+    tbl.tableStyleInfo = TableStyleInfo(
+        name=style_name,
+        showFirstColumn=False,
+        showLastColumn=False,
+        showRowStripes=True,
+        showColumnStripes=False,
+    )
+    ws.add_table(tbl)
+
+
+def _delete_table(owb: Any, p: dict) -> None:
+    """Remove an Excel Table by name from its sheet."""
+    ws = _get_openpyxl_sheet(owb, p["sheet"])
+    table_name = p["name"]
+    if table_name not in ws.tables:
+        raise ApplyError(f"Table '{table_name}' not found on sheet '{p['sheet']}'.")
+    del ws.tables[table_name]
+
+
 # ── named range operations ────────────────────────────────────────────────────
 
 def _add_named_range(owb: Any, p: dict) -> None:
@@ -513,6 +548,8 @@ _OPENPYXL_HANDLERS.update({
     "copy_sheet":        _copy_sheet,
     "hide_sheet":        _hide_sheet,
     "unhide_sheet":      _unhide_sheet,
+    "create_table":       _create_table,
+    "delete_table":       _delete_table,
     "set_named_range":   _add_named_range,
     "delete_named_range": _delete_named_range,
     "merge_cells":       _merge_cells,
