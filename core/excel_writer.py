@@ -274,6 +274,58 @@ def _delete_vba_module(wb: Any, p: dict) -> None:
     wb.VBProject.VBComponents.Remove(comp)
 
 
+# ── format operations ─────────────────────────────────────────────────────────
+
+def _hex_to_bgr(hex_color: str) -> int:
+    """Convert 6-char RGB hex string to Excel BGR int."""
+    h = hex_color.lstrip("#")
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return (b << 16) | (g << 8) | r
+
+
+# xl HorizontalAlignment constants
+_HA_CONST: dict[str, int] = {
+    "general": 1, "left": -4131, "center": -4108,
+    "right": -4152, "justify": -4130,
+}
+
+
+def _format_cell(wb: Any, p: dict) -> None:
+    """Apply formatting to a cell or range.
+
+    Supported params (all optional):
+      sheet, cell/range   — target (cell overrides range)
+      number_format       — e.g. "#,##0.00"
+      bold, italic        — bool
+      font_color          — 6-char RGB hex, e.g. "FF0000"
+      bg_color            — 6-char RGB hex
+      h_align             — "left"|"center"|"right"|"general"|"justify"
+      wrap_text           — bool
+    """
+    sheet = _get_sheet(wb, p["sheet"])
+    ref = p.get("cell") or p.get("range")
+    if not ref:
+        raise ApplyError("format_cell requires 'cell' or 'range' param")
+    rng = sheet.Range(ref)
+
+    if "number_format" in p:
+        rng.NumberFormat = p["number_format"]
+    if "bold" in p:
+        rng.Font.Bold = p["bold"]
+    if "italic" in p:
+        rng.Font.Italic = p["italic"]
+    if "font_color" in p:
+        rng.Font.Color = _hex_to_bgr(p["font_color"])
+    if "bg_color" in p:
+        rng.Interior.Color = _hex_to_bgr(p["bg_color"])
+    if "h_align" in p:
+        const = _HA_CONST.get(str(p["h_align"]).lower())
+        if const is not None:
+            rng.HorizontalAlignment = const
+    if "wrap_text" in p:
+        rng.WrapText = p["wrap_text"]
+
+
 # ── named range operations ────────────────────────────────────────────────────
 
 def _add_named_range(wb: Any, p: dict) -> None:
@@ -292,6 +344,7 @@ _HANDLERS.update({
     "set_cell":           _set_cell,
     "set_range":          _set_range,
     "clear_range":        _clear_range,
+    "format_cell":        _format_cell,
     "add_sheet":          _add_sheet,
     "delete_sheet":       _delete_sheet,
     "rename_sheet":       _rename_sheet,

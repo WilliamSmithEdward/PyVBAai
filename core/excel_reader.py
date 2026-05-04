@@ -15,6 +15,7 @@ from typing import Any
 
 from models.workbook import (
     CellData,
+    CellFormat,
     ContextConfig,
     NamedRange,
     SheetData,
@@ -167,12 +168,29 @@ def read_workbook(file_path: str, config: ContextConfig | None = None) -> Workbo
                 raw_values = used.Value
                 raw_formulas = used.Formula if config.include_formulas else None
 
+                # Format bulk-reads — each property costs one COM round-trip for
+                # the entire range, far cheaper than per-cell access.
+                raw_nf = used.NumberFormat    if config.include_number_format else None
+                raw_bold = used.Font.Bold     if config.include_font_style    else None
+                raw_italic = used.Font.Italic if config.include_font_style    else None
+                raw_fc = used.Font.Color      if config.include_font_color    else None
+                raw_bg = used.Interior.Color  if config.include_bg_color      else None
+                raw_ha = used.HorizontalAlignment if config.include_alignment else None
+                raw_wt = used.WrapText            if config.include_alignment else None
+
                 values_2d = _normalise_range(raw_values, row_count)
                 formulas_2d = (
                     _normalise_range(raw_formulas, row_count)
                     if raw_formulas is not None
                     else None
                 )
+                nf_2d     = _normalise_range(raw_nf,     row_count) if raw_nf     is not None else None
+                bold_2d   = _normalise_range(raw_bold,   row_count) if raw_bold   is not None else None
+                italic_2d = _normalise_range(raw_italic, row_count) if raw_italic is not None else None
+                fc_2d     = _normalise_range(raw_fc,     row_count) if raw_fc     is not None else None
+                bg_2d     = _normalise_range(raw_bg,     row_count) if raw_bg     is not None else None
+                ha_2d     = _normalise_range(raw_ha,     row_count) if raw_ha     is not None else None
+                wt_2d     = _normalise_range(raw_wt,     row_count) if raw_wt     is not None else None
 
                 for r_idx, row in enumerate(values_2d):
                     for c_idx, val in enumerate(row[:col_count]):
@@ -186,8 +204,13 @@ def read_workbook(file_path: str, config: ContextConfig | None = None) -> Workbo
                             f = formulas_2d[r_idx][c_idx]
                             if isinstance(f, str) and f.startswith("="):
                                 formula = f
+                        fmt = _read_fmt(
+                            r_idx, c_idx,
+                            nf_2d, bold_2d, italic_2d, fc_2d, bg_2d, ha_2d, wt_2d,
+                        ) if config.include_any_format else None
                         sheet_data.cells[addr] = CellData(
-                            row=r, col=c, address=addr, value=val, formula=formula,
+                            row=r, col=c, address=addr, value=val,
+                            formula=formula, fmt=fmt,
                         )
 
                 wb_data.sheets.append(sheet_data)
@@ -289,3 +312,73 @@ def _normalise_range(raw: Any, rows: int) -> list[list]:
     if isinstance(raw, (list, tuple)) and raw and isinstance(raw[0], (list, tuple)):
         return [list(r) for r in raw]  # MxN
     return [[v] for v in raw]  # Mx1 single column
+
+
+# xl HorizontalAlignment constants → compact label
+_HA_MAP: dict[int, str] = {
+    -4108: "center", -4131: "left", -4152: "right",
+    -4130: "justify", 1: "general",
+}
+
+# BGR int (win32com) → 6-char hex RGB string; None/xlNone (4294967295) → None
+def _bgr_to_hex(val: Any) -> str | None:
+    if val is None:
+        return None
+    iv = int(val)
+    if iv < 0 or iv == 4294967295:  # xlColorIndexNone
+        return None
+    b = (iv >> 16) & 0xFF
+    g = (iv >> 8)  & 0xFF
+    r =  iv        & 0xFF
+    return f"{r:02X}{g:02X}{b:02X}"
+
+
+def _read_fmt(
+    r: int, c: int,
+    nf_2d: list[list] | None,
+    bold_2d: list[list] | None,
+    italic_2d: list[list] | None,
+    fc_2d: list[list] | None,
+    bg_2d: list[list] | None,
+    ha_2d: list[list] | None,
+    wt_2d: list[list] | None,
+) -> CellFormat | None:
+    """Extract a CellFormat from pre-read 2-D arrays; returns None if all defaults."""
+    nf     = nf_2d[r][c]     if nf_2d     else None
+    bold   = bold_2d[r][c]   if bold_2d   else None
+    italic = italic_2d[r][c] if italic_2d else None
+    fc     = _bgr_to_hex(fc_2d[r][c])  if fc_2d else None
+    bg     = _bgr_to_hex(bg_2d[r][c])  if bg_2d else None
+    ha_raw = ha_2d[r][c]     if ha_2d     else None
+    ha     = _HA_MAP.get(int(ha_raw), None) if ha_raw is not None else None
+    wt     = wt_2d[r][c]     if wt_2d     else None
+
+    # Skip "General" number format — it's the default
+    if isinstance(nf, str) and nf.strip().lower() == "general":
+        nf = None
+    # Skip black font (0) — default
+    if fc == "000000":
+        fc = None
+    # Skip white/no background — default (no fill)
+    if bg in ("FFFFFF", "000000", None):
+        bg = None
+    # Skip "general" alignment
+    if ha == "general":
+        ha = None
+
+    fmt = CellFormat(
+        number_format=nf or None,
+        bold=True if bold else None,
+        italic=True if italic else None,
+        font_color=fc,
+        bg_color=bg,
+        h_align=ha,
+        wrap_text=True if wt else None,
+    )
+    # Return None if nothing non-default was found
+    if not any([
+        fmt.number_format, fmt.bold, fmt.italic,
+        fmt.font_color, fmt.bg_color, fmt.h_align, fmt.wrap_text,
+    ]):
+        return None
+    return fmt

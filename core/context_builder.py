@@ -100,20 +100,54 @@ def build_context(wb: WorkbookData, config: ContextConfig | None = None) -> str:
                 ):
                     continue
                 rows.setdefault(cell.row, []).append((cell.col, cell.address))
+
+            # Apply per-area row limit when enabled
+            if config.limit_rows_per_area and config.max_rows_per_area > 0:
+                sorted_rows = sorted(rows)
+                if len(sorted_rows) > config.max_rows_per_area:
+                    kept = sorted_rows[:config.max_rows_per_area]
+                    rows = {r: rows[r] for r in kept}
+                    parts.append(
+                        f"  [rows capped at {config.max_rows_per_area} "
+                        f"of {len(sorted_rows)}]"
+                    )
+
             for row_num in sorted(rows):
                 row_parts: list[str] = []
                 for _col_num, addr in sorted(rows[row_num]):
                     cell = sheet.cells[addr]
                     if cell.formula:
-                        row_parts.append(f"{addr}={{={cell.formula[1:]}}}")
+                        val_str = f"{{={cell.formula[1:]}}}"
                     else:
                         val = cell.value
                         if isinstance(val, str):
-                            # Quote strings; truncate very long ones
                             truncated = val[:80] + "..." if len(val) > 80 else val
-                            row_parts.append(f'{addr}="{truncated}"')
+                            val_str = f'"{truncated}"'
                         else:
-                            row_parts.append(f"{addr}={val}")
+                            val_str = str(val)
+                    # Append compact format annotations
+                    fmt_parts: list[str] = []
+                    if cell.fmt:
+                        f = cell.fmt
+                        if f.number_format and config.include_number_format:
+                            fmt_parts.append(f"nf={f.number_format}")
+                        if config.include_font_style:
+                            if f.bold:
+                                fmt_parts.append("B")
+                            if f.italic:
+                                fmt_parts.append("I")
+                        if f.font_color and config.include_font_color:
+                            fmt_parts.append(f"fc=#{f.font_color}")
+                        if f.bg_color and config.include_bg_color:
+                            fmt_parts.append(f"bg=#{f.bg_color}")
+                        if f.h_align and config.include_alignment:
+                            fmt_parts.append(f"al={f.h_align}")
+                        if f.wrap_text and config.include_alignment:
+                            fmt_parts.append("wrap")
+                    if fmt_parts:
+                        row_parts.append(f"{addr}={val_str}[{','.join(fmt_parts)}]")
+                    else:
+                        row_parts.append(f"{addr}={val_str}")
                 parts.append("  " + ", ".join(row_parts))
 
         parts.append("")
