@@ -135,11 +135,14 @@ generated via a VBA macro (`set_vba`).
 | Setting | Default | Description |
 |---|---|---|
 | Model | _none_ | Pick from the toolbar dropdown (live list filtered to GPT-5+ base / -mini variants). The selection is persisted; sending a message with no model selected is blocked. |
-| Max rows per sheet | `100` | Context truncation limit |
+| Max context characters | `150,000` | Hard cap on the size of the snapshot sent to the AI per request |
+| Row limit per data area | `20` (toggleable) | When enabled, each detected data area is truncated to this many rows in context |
 | Include formulas | ✅ | Show cell formulas in context |
 | Include VBA | ✅ | Include VBA source in context |
 | Include named ranges | ✅ | Include named ranges in context |
-| Max backups | `20` | Oldest backups pruned automatically |
+| Cell formatting fields | all on | Per-field toggle: number_format, bold/italic/strike/underline/wrap, font name/size/colour, bg colour, h-/v-align, four borders |
+| Max backups | `20` | Oldest backups in `backups/` pruned automatically |
+| Dark mode | ✅ | Light/dark theme toggle (also available from the toolbar) |
 
 ---
 
