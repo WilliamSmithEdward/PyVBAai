@@ -322,6 +322,54 @@ class TestSetFormatColors:
         _set_cell(owb, {"sheet": ws.title, "cell": "B1", "value": "x", "flags": "~92D050"})
         assert ws["B1"].fill.fgColor.rgb[-6:] == "92D050"
 
+    def test_empty_bg_color_clears_fill(self, owb):
+        # The AI typically issues a "clear" (bg_color="") before re-colouring
+        # a region.  An empty colour string used to raise "Colors must be aRGB
+        # hex values"; it must instead drop the fill back to none.
+        ws = owb.active
+        _set_format(owb, {"sheet": ws.title, "range": "A1", "bg_color": "92D050"})
+        assert ws["A1"].fill.fgColor.rgb[-6:] == "92D050"
+        _set_format(owb, {"sheet": ws.title, "range": "A1", "bg_color": ""})
+        assert ws["A1"].fill.fill_type in (None, "none")
+
+    def test_empty_font_color_resets_to_default(self, owb):
+        ws = owb.active
+        _set_format(owb, {"sheet": ws.title, "range": "A1", "font_color": "FF0000"})
+        _set_format(owb, {"sheet": ws.title, "range": "A1", "font_color": ""})
+        # Default font has no explicit color set.
+        assert ws["A1"].font.color is None
+
+    def test_range_extending_past_used_area_is_honored(self, owb):
+        # Regression: _set_format used to clamp every range to ws.max_row /
+        # ws.max_column to defend against whole-column refs like "A:H".  That
+        # silently truncated explicit ranges that extend past the stored data
+        # area -- e.g. a dynamic-array spill rectangle Q2:S6 where only Q2
+        # holds the formula and R/S are populated by Excel on open.
+        ws = owb.active
+        # Plant data only in column A so ws.max_column == 1 and ws.max_row == 1.
+        ws["A1"] = "anchor"
+        # Now ask for a 5x3 rectangle that extends well past the used area.
+        _set_format(owb, {"sheet": ws.title, "range": "Q2:S6", "bg_color": "E6E0F8"})
+        # Every cell in the requested rectangle must have received the fill.
+        for col in ("Q", "R", "S"):
+            for row in range(2, 7):
+                cell = ws[f"{col}{row}"]
+                assert cell.fill.fgColor.rgb[-6:] == "E6E0F8", (
+                    f"{col}{row} was not coloured -- range was clamped"
+                )
+
+    def test_whole_column_ref_still_clamped(self, owb):
+        # Make sure the original whole-column safety net still works: "A:H"
+        # must NOT iterate 1,048,576 rows.  We only need to verify it returns
+        # quickly and that at least the cells inside the actual used area get
+        # the fill applied.
+        ws = owb.active
+        ws["A1"] = "x"
+        ws["H1"] = "y"
+        _set_format(owb, {"sheet": ws.title, "range": "A:H", "bg_color": "FFFF00"})
+        assert ws["A1"].fill.fgColor.rgb[-6:] == "FFFF00"
+        assert ws["H1"].fill.fgColor.rgb[-6:] == "FFFF00"
+
 
 # ── _create_chart / _delete_chart ─────────────────────────────────────────────
 
@@ -370,6 +418,32 @@ class TestAddXlfnPrefix:
     def test_set_cell_applies_prefix(self, owb):
         _set_cell(owb, {"sheet": "Sheet1", "cell": "A1", "formula": "=XLOOKUP(1,B:B,C:C)"})
         assert owb["Sheet1"]["A1"].value == "=_xlfn.XLOOKUP(1,B:B,C:C)"
+
+    def test_spilled_range_operator_rewritten(self):
+        # "O2#" is Excel formula-bar syntax for a spilled range; the OOXML
+        # form is _xlfn.ANCHORARRAY(O2). Storing the literal "#" makes Excel
+        # discard the formula on next open ("Removed Records: Formula").
+        result = _add_xlfn_prefix('=XLOOKUP("Apple",O2#,D2:D7,"Not found")')
+        assert result == '=_xlfn.XLOOKUP("Apple",_xlfn.ANCHORARRAY(O2),D2:D7,"Not found")'
+
+    def test_spilled_range_with_sheet_qualifier(self):
+        # Excel stores "Sheet1!A1#" with the sheet qualifier inside the
+        # ANCHORARRAY call: _xlfn.ANCHORARRAY(Sheet1!A1).
+        result = _add_xlfn_prefix("=SUM(Sheet1!A1#)")
+        assert result == "=SUM(_xlfn.ANCHORARRAY(Sheet1!A1))"
+
+    def test_spilled_range_with_quoted_sheet_qualifier(self):
+        result = _add_xlfn_prefix("=SUM('My Sheet'!A1#)")
+        assert result == "=SUM(_xlfn.ANCHORARRAY('My Sheet'!A1))"
+
+    def test_spilled_range_absolute(self):
+        result = _add_xlfn_prefix("=SUM($A$1#)")
+        assert result == "=SUM(_xlfn.ANCHORARRAY($A$1))"
+
+    def test_error_tokens_not_rewritten(self):
+        # #REF!, #NAME?, #VALUE! must not be touched.
+        assert _add_xlfn_prefix("=A1+#REF!") == "=A1+#REF!"
+        assert _add_xlfn_prefix('=IFERROR(A1,"#N/A")') == '=IFERROR(A1,"#N/A")'
 
 
 class TestDaFeaturesInjection:

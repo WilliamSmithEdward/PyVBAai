@@ -134,7 +134,7 @@ generated via a VBA macro (`set_vba`).
 
 | Setting | Default | Description |
 |---|---|---|
-| Model | `gpt-4o` | OpenAI model used for chat |
+| Model | first GPT-5+ model returned by the OpenAI API | Selected from a live dropdown; older generations (gpt-4o, gpt-3.5, …) are filtered out |
 | Max rows per sheet | `100` | Context truncation limit |
 | Include formulas | ✅ | Show cell formulas in context |
 | Include VBA | ✅ | Include VBA source in context |
@@ -171,7 +171,7 @@ PyVBAai/
 ├── docs/
 │   ├── cell-notation.md
 │   └── dynamic-array-formulas.md
-├── tests/                      # pytest suite (~268 tests)
+├── tests/                      # pytest suite (~310 tests)
 ├── requirements.txt
 ├── PyVBAai.spec                # PyInstaller spec
 └── build.bat                   # One-click build script

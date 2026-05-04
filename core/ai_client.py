@@ -158,6 +158,27 @@ neighbouring cells.  They are fully supported — write them like any other form
 {"type":"set_cell", "sheet":"Sheet1", "cell":"H2", "formula":"=UNIQUE(B2:B100)"}
 {"type":"set_cell", "sheet":"Sheet1", "cell":"J2", "formula":"=SEQUENCE(10,3,1,1)"}
 
+Inferring the spill range when reasoning about an existing workbook:
+The context only shows cells that already have a stored value or formula — for an
+existing dynamic-array formula, this is usually just the anchor cell.  The spilled
+result cells appear empty in the snapshot but Excel populates them on open.  When
+analysing or modifying a workbook you MUST infer the full spill rectangle from the
+formula at the anchor and treat those cells as occupied:
+- =SEQUENCE(rows, cols, ...)        -> rows x cols rectangle starting at anchor
+- =SEQUENCE(n)                       -> n x 1 column starting at anchor
+- =UNIQUE(range)                     -> up to (rows of range) x (cols of range)
+- =SORT(range) / =SORTBY(range,...)  -> exactly the dimensions of range
+- =FILTER(range, condition, ...)     -> up to (rows of range) x (cols of range)
+- =XLOOKUP(lookup, lookup_arr, return_arr) -> dimensions of return_arr
+- =RANDARRAY(rows, cols, ...)        -> rows x cols starting at anchor
+- =MAP/=BYROW/=BYCOL/=REDUCE/=SCAN/=MAKEARRAY -> derive from the input array argument
+
+Treat the inferred spill rectangle as occupied: do not place new content inside it,
+do not assume those cells are blank, and when adding adjacent labels/headers leave
+room for the full spill.  When summarising a sheet, mention the implied spill range
+explicitly (e.g. "SEQUENCE(5,3) at Q2 spills to Q2:S6") rather than reporting that
+columns past the anchor are empty.
+
 Best practices:
 - Place the formula on a single anchor cell only — Excel spills automatically; do not write
   the same formula across the spill range.
@@ -165,6 +186,14 @@ Best practices:
   If a non-empty cell blocks the spill, Excel shows #SPILL!.
 - Do not put dynamic-array formulas inside an Excel Table (create_table) — tables disable
   spilling.  Place them on plain sheet cells instead.
+- When a dynamic-array formula needs to reference an Excel Table, use a column-qualified
+  structured reference (e.g. ``DataTable[Item]`` or ``DataTable[#Data]``), NOT the bare
+  table name (``DataTable``).  The bare-name form is allowed in Excel's formula bar but
+  fails to resolve cleanly when the file is loaded from OOXML, leaving #NAME? on the
+  anchor cell until the user manually re-enters the formula.  Prefer:
+    =FILTER(DataTable[#Data], DataTable[Category]="Fruit", "No matches")
+  over:
+    =FILTER(DataTable, DataTable[Category]="Fruit", "No matches")
 - Reference a spilled range from another formula with the # operator: =SUM(F2#) sums the
   entire spill range starting at F2.
 - The first time the file is opened in Excel the formulas are recalculated and the spill

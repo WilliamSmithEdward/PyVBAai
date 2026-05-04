@@ -337,6 +337,18 @@ def read_workbook(file_path: str, config: ContextConfig | None = None) -> Workbo
                             if isinstance(value, str) and value.startswith("="):
                                 formula = value
                                 value = None
+                            else:
+                                # Dynamic-array / legacy CSE formulas come back
+                                # as openpyxl ArrayFormula objects (with .text
+                                # like "XLOOKUP(...)" -- no leading "=").
+                                # Coerce to a normal formula string so the AI
+                                # context shows the real formula text instead
+                                # of repr(ArrayFormula(...)).
+                                text = getattr(value, "text", None)
+                                if text is not None:
+                                    text = str(text)
+                                    formula = text if text.startswith("=") else "=" + text
+                                    value = None
                             sheet_data.cells[addr] = CellData(
                                 row=r, col=c, address=addr,
                                 value=value, formula=formula,

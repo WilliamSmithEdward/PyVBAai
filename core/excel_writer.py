@@ -51,6 +51,17 @@ _XLFN_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Spilled-range operator: "A1#" in the formula bar must be stored as
+# _xlfn.ANCHORARRAY(A1) in OOXML. Storing the literal "#" form crashes Excel
+# with "Removed Records: Formula" on next open. Match an optional sheet
+# qualifier ("Sheet1!" or "'My Sheet'!") followed by an A1-style address and
+# a trailing "#". Avoid matching inside larger identifiers via lookbehind.
+_SPILL_REF_RE = re.compile(
+    r"(?<![A-Za-z0-9_.])"
+    r"((?:'[^']+'|[A-Za-z_][A-Za-z0-9_.]*)!)?"   # optional sheet qualifier
+    r"(\$?[A-Z]+\$?\d+)#",
+)
+
 
 def _add_xlfn_prefix(formula: str) -> str:
     """Rewrite formula so Excel-2013+ functions carry the required _xlfn. prefix.
@@ -59,10 +70,20 @@ def _add_xlfn_prefix(formula: str) -> str:
     functions introduced after Excel 2010 be stored as _xlfn.FUNCNAME().
     Without the prefix Excel shows #NAME? and prepends @ to suppress spilling.
     Already-prefixed functions are left unchanged (lookbehind skips after '.').
+
+    Also rewrites the spilled-range operator "A1#" to its OOXML form
+    ``_xlfn.ANCHORARRAY(A1)``; storing the bare "#" makes Excel discard the
+    formula on next open.
     """
     if not formula.startswith("="):
         return formula
-    return "=" + _XLFN_RE.sub(lambda m: f"_xlfn.{m.group(1).upper()}", formula[1:])
+    body = formula[1:]
+    body = _XLFN_RE.sub(lambda m: f"_xlfn.{m.group(1).upper()}", body)
+    body = _SPILL_REF_RE.sub(
+        lambda m: f"_xlfn.ANCHORARRAY({(m.group(1) or '')}{m.group(2)})",
+        body,
+    )
+    return "=" + body
 
 
 class ApplyError(Exception):
@@ -321,9 +342,12 @@ def _to_argb(color: str) -> str:
     """Ensure a color string is 8-char ARGB (openpyxl requirement).
 
     Accepts 6-char RGB ('FF0000') or 8-char ARGB ('FFFF0000').
+    Empty string is preserved -- callers use it to mean "clear the colour".
     Raises ValueError for anything else so the problem surfaces immediately.
     """
-    c = color.strip().upper().lstrip("#")
+    c = (color or "").strip().upper().lstrip("#")
+    if c == "":
+        return ""
     if len(c) == 6:
         return f"FF{c}"
     if len(c) == 8:
@@ -332,7 +356,10 @@ def _to_argb(color: str) -> str:
 
 
 def _normalize_colors(p: dict) -> dict:
-    """Return a copy of p with all color keys normalised to 8-char ARGB."""
+    """Return a copy of p with all color keys normalised to 8-char ARGB.
+
+    An empty-string colour is preserved (it signals "clear the colour").
+    """
     out = dict(p)
     for key in _COLOR_KEYS:
         if key in out:
@@ -590,10 +617,18 @@ def _set_format(owb: Any, p: dict) -> None:
     try:
         min_col, min_row, max_col, max_row = openpyxl.utils.range_boundaries(rng)
         assert min_col is not None and min_row is not None and max_col is not None and max_row is not None
-        # Clamp to the sheet's actual used rows/cols to avoid iterating millions
-        # of empty cells for whole-column/row refs like "A:H" or "1:3".
-        max_row = min(max_row, ws.max_row or 1)
-        max_col = min(max_col, ws.max_column or 1)
+        # Whole-column refs ("A:H") and whole-row refs ("1:3") expand to the
+        # Excel sheet limits (1,048,576 rows / 16,384 cols). Iterating those
+        # is hopeless, so clamp them down to the actual used area. Explicit
+        # finite ranges (e.g. "Q2:S6") must be honoured even when they
+        # extend past the currently-stored data -- a dynamic-array spill
+        # rectangle, for instance, only stores its anchor cell, and the
+        # caller still expects formatting to land on every cell in the
+        # rectangle.
+        if max_row >= 1_048_576:
+            max_row = max(min_row, ws.max_row or min_row)
+        if max_col >= 16_384:
+            max_col = max(min_col, ws.max_column or min_col)
         cells = [ws.cell(row=r, column=c)
                  for r in range(min_row, max_row + 1)
                  for c in range(min_col, max_col + 1)]
@@ -616,6 +651,13 @@ def _set_format(owb: Any, p: dict) -> None:
         if any(k in p for k in ("bold", "italic", "strikethrough", "underline", "font_name", "font_size", "font_color")):
             existing = cell.font or Font()
             fc = p.get("font_color")  # already ARGB from _expand_flags / _normalize_colors
+            # Empty-string font_color means "reset to default" (no color).
+            if fc == "":
+                resolved_color = None
+            elif fc is not None:
+                resolved_color = fc
+            else:
+                resolved_color = existing.color or None
             cell.font = Font(
                 bold=p.get("bold", existing.bold),
                 italic=p.get("italic", existing.italic),
@@ -623,10 +665,15 @@ def _set_format(owb: Any, p: dict) -> None:
                 underline="single" if p.get("underline", existing.underline) else None,
                 name=p.get("font_name", existing.name),
                 size=p.get("font_size", existing.size),
-                color=fc if fc is not None else (existing.color or None),
+                color=resolved_color,
             )
         if "bg_color" in p:
-            cell.fill = PatternFill(fill_type="solid", fgColor=p["bg_color"])  # already ARGB
+            bg = p["bg_color"]
+            if bg:
+                cell.fill = PatternFill(fill_type="solid", fgColor=bg)  # already ARGB
+            else:
+                # Empty string means "remove the fill" (no PatternFill type).
+                cell.fill = PatternFill(fill_type=None)
         if any(k in p for k in ("h_align", "v_align", "wrap_text")):
             existing_a = cell.alignment or Alignment()
             cell.alignment = Alignment(

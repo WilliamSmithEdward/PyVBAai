@@ -34,7 +34,9 @@ _CELL_LEGEND = (
     "         #<spec>=number_format  fn:<name>=font_name  fs:<pts>=font_size\n"
     "         ^<RRGGBB>=font_color  ~<RRGGBB>=bg_color\n"
     "         ha:<l|c|r>=h_align  va:<t|c|b>=v_align\n"
-    "         bt/bb/bl/br:<style>[:<RRGGBB>]=border (thin|medium|thick|dashed|dotted|double|hair)"
+    "         bt/bb/bl/br:<style>[:<RRGGBB>]=border (thin|medium|thick|dashed|dotted|double|hair)\n"
+    "         spill:<range>=dynamic-array spill rectangle (FILTER/UNIQUE/SORT/SEQUENCE/etc.);"
+    " those cells are populated by Excel on open and must be treated as occupied"
 )
 
 
@@ -65,6 +67,155 @@ def _parse_area_addr(addr: str) -> tuple[int, int, int, int] | None:
     return (
         int(m.group(2)), _col_letters_to_num(m.group(1)),
         int(m.group(4)), _col_letters_to_num(m.group(3)),
+    )
+
+
+# -- dynamic-array spill inference -------------------------------------------
+
+# Strip _xlfn. (and similar) prefixes when matching function names.
+_XLFN_PREFIX_RE = re.compile(r"_xlfn(?:\._xlws)?\.", re.IGNORECASE)
+
+# Range like "A1:C10" or "$A$1:$C$10" inside a formula argument.
+_RANGE_RE = re.compile(r"\$?([A-Z]+)\$?(\d+):\$?([A-Z]+)\$?(\d+)")
+_INT_RE = re.compile(r"^\s*-?\d+\s*$")
+
+
+def _split_top_args(s: str) -> list[str]:
+    """Split a function argument list on commas, respecting nested parens/strings."""
+    args: list[str] = []
+    depth = 0
+    in_str = False
+    buf: list[str] = []
+    for ch in s:
+        if in_str:
+            buf.append(ch)
+            if ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+            buf.append(ch)
+        elif ch == "(":
+            depth += 1
+            buf.append(ch)
+        elif ch == ")":
+            depth -= 1
+            buf.append(ch)
+        elif ch == "," and depth == 0:
+            args.append("".join(buf).strip())
+            buf = []
+        else:
+            buf.append(ch)
+    if buf or args:
+        args.append("".join(buf).strip())
+    return args
+
+
+def _range_dims(arg: str) -> tuple[int, int] | None:
+    """Return (rows, cols) for a literal A1:C10-style range argument, else None."""
+    m = _RANGE_RE.fullmatch(arg.strip())
+    if not m:
+        return None
+    c1 = _col_letters_to_num(m.group(1))
+    r1 = int(m.group(2))
+    c2 = _col_letters_to_num(m.group(3))
+    r2 = int(m.group(4))
+    if r2 < r1 or c2 < c1:
+        return None
+    return (r2 - r1 + 1, c2 - c1 + 1)
+
+
+def _infer_spill_dims(formula: str) -> tuple[int, int] | None:
+    """Infer (rows, cols) of the spill produced by a dynamic-array formula.
+
+    Returns None when the function is not a recognised dynamic-array function
+    or when its arguments cannot be statically analysed (e.g. SEQUENCE(n*2)).
+    Conservative: returns None rather than guessing.
+    """
+    if not formula or not formula.startswith("="):
+        return None
+    body = formula[1:].lstrip()
+    body = _XLFN_PREFIX_RE.sub("", body)
+    m = re.match(r"([A-Z]+)\s*\(", body, re.IGNORECASE)
+    if not m:
+        return None
+    name = m.group(1).upper()
+    inner_start = m.end()
+    # Find the matching closing paren of this outer call.
+    depth = 1
+    i = inner_start
+    in_str = False
+    while i < len(body) and depth > 0:
+        ch = body[i]
+        if in_str:
+            if ch == '"':
+                in_str = False
+        elif ch == '"':
+            in_str = True
+        elif ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        i += 1
+    if depth != 0:
+        return None
+    inner = body[inner_start:i - 1]
+    args = _split_top_args(inner)
+    # An empty argument list is fine for RANDARRAY (defaults to 1x1) but
+    # invalid for every other supported function.
+    if not args and name != "RANDARRAY":
+        return None
+
+    if name == "SEQUENCE":
+        # SEQUENCE(rows, [cols], [start], [step])
+        if not _INT_RE.match(args[0]):
+            return None
+        rows = int(args[0])
+        cols = 1
+        if len(args) >= 2 and _INT_RE.match(args[1]):
+            cols = int(args[1])
+        if rows < 1 or cols < 1:
+            return None
+        return (rows, cols)
+
+    if name == "RANDARRAY":
+        # RANDARRAY([rows], [cols], ...) - both default to 1 when omitted.
+        rows = 1
+        cols = 1
+        if len(args) >= 1 and args[0] and _INT_RE.match(args[0]):
+            rows = int(args[0])
+        if len(args) >= 2 and args[1] and _INT_RE.match(args[1]):
+            cols = int(args[1])
+        if rows < 1 or cols < 1:
+            return None
+        return (rows, cols)
+
+    if name in {"SORT", "SORTBY", "UNIQUE", "FILTER"}:
+        return _range_dims(args[0])
+
+    # XLOOKUP and the lambda-helper functions are intentionally not handled:
+    # XLOOKUP's spill shape depends on whether lookup_value is a scalar or a
+    # range, which is hard to determine statically; the lambda helpers depend
+    # on lambda evaluation. Be conservative and return None for both rather
+    # than emit a wrong spill range.
+
+    if name in {"BYROW", "BYCOL", "MAP", "REDUCE", "SCAN", "MAKEARRAY"}:
+        # Conservative: skip these since they depend on lambda evaluation.
+        return None
+
+    return None
+
+
+def _spill_range(anchor_col: int, anchor_row: int, dims: tuple[int, int]) -> str:
+    """Build an A1-notation range like 'Q2:S6' from anchor + (rows, cols)."""
+    rows, cols = dims
+    if rows <= 1 and cols <= 1:
+        return f"{_col_letter(anchor_col)}{anchor_row}"
+    end_col = anchor_col + cols - 1
+    end_row = anchor_row + rows - 1
+    return (
+        f"{_col_letter(anchor_col)}{anchor_row}"
+        f":{_col_letter(end_col)}{end_row}"
     )
 
 
@@ -211,6 +362,11 @@ def build_context(wb: WorkbookData, config: ContextConfig | None = None) -> str:
                         cell = sheet.cells[addr]
                         if cell.formula:
                             token = f"{col_str}={{{cell.formula[1:]}}}"
+                            spill_dims = _infer_spill_dims(cell.formula)
+                            if spill_dims is not None:
+                                spill = _spill_range(col_num, row_num, spill_dims)
+                                if ":" in spill:
+                                    token += f"[spill:{spill}]"
                         else:
                             val = cell.value
                             if isinstance(val, str):

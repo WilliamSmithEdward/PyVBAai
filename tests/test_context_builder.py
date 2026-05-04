@@ -6,7 +6,9 @@ from __future__ import annotations
 
 from core.context_builder import (
     _DEFAULT_MAX_CONTEXT_CHARS,
+    _infer_spill_dims,
     _parse_area_addr,
+    _spill_range,
     build_context,
     estimate_tokens,
 )
@@ -207,6 +209,121 @@ class TestBuildContextFiltering:
     def test_none_config_uses_defaults(self, workbook):
         ctx = build_context(workbook, None)
         assert ctx  # Just verify it doesn't crash
+
+
+# ── _infer_spill_dims / _spill_range ──────────────────────────────────────────
+
+class TestInferSpillDims:
+    def test_sequence_rows_cols(self):
+        assert _infer_spill_dims("=SEQUENCE(5,3,1,1)") == (5, 3)
+
+    def test_sequence_rows_only(self):
+        assert _infer_spill_dims("=SEQUENCE(7)") == (7, 1)
+
+    def test_sequence_with_xlfn_prefix(self):
+        assert _infer_spill_dims("=_xlfn.SEQUENCE(5,4)") == (5, 4)
+
+    def test_sequence_lowercase(self):
+        assert _infer_spill_dims("=sequence(2, 3)") == (2, 3)
+
+    def test_sequence_non_numeric_skipped(self):
+        # Non-literal first arg cannot be statically evaluated.
+        assert _infer_spill_dims("=SEQUENCE(A1, 3)") is None
+
+    def test_randarray_dims(self):
+        assert _infer_spill_dims("=RANDARRAY(4, 5)") == (4, 5)
+
+    def test_randarray_no_args(self):
+        assert _infer_spill_dims("=RANDARRAY()") == (1, 1)
+
+    def test_unique_from_range(self):
+        assert _infer_spill_dims("=UNIQUE(A2:A17)") == (16, 1)
+
+    def test_sort_from_range(self):
+        assert _infer_spill_dims("=SORT(B2:D10)") == (9, 3)
+
+    def test_sortby_from_first_range(self):
+        assert _infer_spill_dims("=SORTBY(A2:C10, C2:C10, -1)") == (9, 3)
+
+    def test_filter_from_range(self):
+        assert _infer_spill_dims('=FILTER(A2:D8, A2:A8="Fruit", "no match")') == (7, 4)
+
+    def test_xlookup_not_inferred(self):
+        # XLOOKUP's spill shape depends on whether lookup_value is a scalar
+        # or a range, which we cannot determine statically, so we deliberately
+        # do NOT infer a spill rectangle for it.
+        assert _infer_spill_dims('=XLOOKUP("a", B2:B10, D2:F10)') is None
+        assert _infer_spill_dims('=XLOOKUP("a", B2:B10)') is None
+
+    def test_plain_sum_not_spill(self):
+        assert _infer_spill_dims("=SUM(A1:A10)") is None
+
+    def test_non_formula(self):
+        assert _infer_spill_dims("hello") is None
+        assert _infer_spill_dims("") is None
+
+    def test_lambda_helpers_skipped(self):
+        # MAP/BYROW/etc. depend on lambda evaluation, so we don't infer them.
+        assert _infer_spill_dims("=MAP(A1:A10, LAMBDA(x, x*2))") is None
+        assert _infer_spill_dims("=BYROW(A1:C10, LAMBDA(r, SUM(r)))") is None
+
+
+class TestSpillRange:
+    def test_multi_cell_range(self):
+        # Q2 + (5 rows, 3 cols) -> Q2:S6
+        # col Q = 17, +3 cols = 17, 18, 19 -> Q, R, S
+        assert _spill_range(17, 2, (5, 3)) == "Q2:S6"
+
+    def test_single_cell_returns_address(self):
+        assert _spill_range(1, 1, (1, 1)) == "A1"
+
+    def test_single_column(self):
+        assert _spill_range(1, 1, (10, 1)) == "A1:A10"
+
+    def test_single_row(self):
+        assert _spill_range(1, 1, (1, 5)) == "A1:E1"
+
+
+class TestSpillAnnotationInContext:
+    def test_sequence_anchor_emits_spill_flag(self):
+        cell = CellData(
+            row=2, col=17, address="Q2", value=0,
+            formula="=_xlfn.SEQUENCE(5,3,1,1)",
+        )
+        s = _make_sheet("Sheet1", {"Q2": cell})
+        wb = _make_wb(sheets=[s])
+        ctx = build_context(wb)
+        assert "[spill:Q2:S6]" in ctx
+
+    def test_unique_anchor_emits_spill_flag(self):
+        cell = CellData(
+            row=2, col=13, address="M2", value=0,
+            formula="=_xlfn.UNIQUE(A2:A17)",
+        )
+        s = _make_sheet("Sheet1", {"M2": cell})
+        wb = _make_wb(sheets=[s])
+        ctx = build_context(wb)
+        assert "[spill:M2:M17]" in ctx
+
+    def test_plain_formula_has_no_spill_flag(self):
+        cell = CellData(row=1, col=1, address="A1", value=0, formula="=SUM(B:B)")
+        s = _make_sheet("Sheet1", {"A1": cell})
+        wb = _make_wb(sheets=[s])
+        ctx = build_context(wb)
+        assert "[spill:" not in ctx
+
+    def test_xlookup_no_spill_flag(self):
+        # XLOOKUP is deliberately not annotated -- its spill shape depends on
+        # whether lookup_value is a scalar or a range.
+        cell = CellData(
+            row=2, col=11, address="K2", value=0,
+            formula='=_xlfn.XLOOKUP("Apple", B2:B7, D2:D7, "Not found")',
+        )
+        s = _make_sheet("Sheet1", {"K2": cell})
+        wb = _make_wb(sheets=[s])
+        ctx = build_context(wb)
+        assert "[spill:" not in ctx
+
 
     def test_excluded_area_hides_cells_in_range(self):
         # Sheet with cells at A1 (r1,c1), C3 (r3,c3), and E5 (r5,c5).
