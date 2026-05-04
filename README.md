@@ -134,7 +134,7 @@ generated via a VBA macro (`set_vba`).
 
 | Setting | Default | Description |
 |---|---|---|
-| Model | first GPT-5+ model returned by the OpenAI API | Selected from a live dropdown; older generations (gpt-4o, gpt-3.5, …) are filtered out |
+| Model | _none_ | Pick from the toolbar dropdown (live list filtered to GPT-5+ base / -mini variants). The selection is persisted; sending a message with no model selected is blocked. |
 | Max rows per sheet | `100` | Context truncation limit |
 | Include formulas | ✅ | Show cell formulas in context |
 | Include VBA | ✅ | Include VBA source in context |
