@@ -146,8 +146,9 @@ Before finalising any VBA code, perform a mental lint pass and verify:
 - Existing charts on a sheet are listed in context as CHARTS: type "title" @ anchor.
 
 ### Pivot Tables
-Pivot tables cannot be created directly — use a VBA macro (set_vba) to create them.
+Pivot tables and pivot charts cannot be created directly — use a VBA macro (set_vba) to create them.
 Existing pivot tables on a sheet are listed in context as PIVOT TABLES: name1, name2.
+Existing pivot charts appear in the CHARTS list like regular charts.
 
 ## Rules
 1. Sheet names and addresses must exactly match the context (case-sensitive).
