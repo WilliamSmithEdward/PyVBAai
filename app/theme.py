@@ -9,6 +9,7 @@ import tempfile
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QBrush, QColor, QPainter, QPen
+from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import (
     QApplication,
     QProxyStyle,
@@ -525,3 +526,20 @@ def apply_theme(app: QApplication, dark: bool = True) -> None:
     arrow = _chevron_svg_path("#89b4fa" if dark else "#1e66f5")
     qss = (DARK_QSS if dark else LIGHT_QSS).replace("__ARROW_PATH__", arrow)
     app.setStyleSheet(qss)
+
+    # Set QPalette so QTextEdit / QAbstractScrollArea viewports use the right
+    # Base (background) and Text colors regardless of OS dark-mode overrides.
+    palette = app.palette()
+    if dark:
+        palette.setColor(QPalette.ColorRole.Base,   QColor("#313244"))
+        palette.setColor(QPalette.ColorRole.Text,   QColor("#cdd6f4"))
+        palette.setColor(QPalette.ColorRole.Window, QColor("#1e1e2e"))
+        palette.setColor(QPalette.ColorRole.WindowText, QColor("#cdd6f4"))
+        palette.setColor(QPalette.ColorRole.PlaceholderText, QColor("#6c7086"))
+    else:
+        palette.setColor(QPalette.ColorRole.Base,   QColor("#dce0e8"))
+        palette.setColor(QPalette.ColorRole.Text,   QColor("#4c4f69"))
+        palette.setColor(QPalette.ColorRole.Window, QColor("#eff1f5"))
+        palette.setColor(QPalette.ColorRole.WindowText, QColor("#4c4f69"))
+        palette.setColor(QPalette.ColorRole.PlaceholderText, QColor("#9ca0b0"))
+    app.setPalette(palette)
