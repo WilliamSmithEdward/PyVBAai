@@ -268,6 +268,60 @@ def _ensure_model() -> bool:
     return dlg.exec() == QDialog.DialogCode.Accepted
 
 
+def _make_app_icon():
+    """Draw the PyVBAai app icon using Qt primitives. No image file required."""
+    from PySide6.QtCore import QRectF
+    from PySide6.QtGui import QBrush, QColor, QIcon, QPainter, QPainterPath, QPixmap
+
+    size = 256
+    px = QPixmap(size, size)
+    px.fill(QColor(0, 0, 0, 0))
+
+    p = QPainter(px)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+    # Outer rounded square background
+    bg_path = QPainterPath()
+    bg_path.addRoundedRect(QRectF(0, 0, size, size), 52, 52)
+    p.fillPath(bg_path, QBrush(QColor("#1e1e2e")))
+
+    # White page body with rounded corners
+    margin = 52
+    page_w = size - margin * 2
+    page_h = int(page_w * 1.25)
+    page_x = margin
+    page_y = (size - page_h) // 2 + 4
+    page_path = QPainterPath()
+    page_path.addRoundedRect(QRectF(page_x, page_y, page_w, page_h), 14, 14)
+    p.fillPath(page_path, QBrush(QColor("#e8e8f4")))
+
+    # Folded corner (top-right)
+    fold = 28
+    fold_path = QPainterPath()
+    fold_path.moveTo(page_x + page_w - fold, page_y)
+    fold_path.lineTo(page_x + page_w, page_y + fold)
+    fold_path.lineTo(page_x + page_w - fold, page_y + fold)
+    fold_path.closeSubpath()
+    p.fillPath(fold_path, QBrush(QColor("#a0a0c0")))
+
+    # Three text lines (green dots representing cells)
+    dot_color = QBrush(QColor("#89b4fa"))
+    line_start_x = page_x + 16
+    line_y_start = page_y + fold + 18
+    line_gap = 18
+    line_w_long = page_w - 32
+    line_w_short = int(line_w_long * 0.6)
+    dot_h = 7
+    for i, lw in enumerate([line_w_long, line_w_long, line_w_short]):
+        ly = line_y_start + i * line_gap
+        line_path = QPainterPath()
+        line_path.addRoundedRect(QRectF(line_start_x, ly, lw, dot_h), 3, 3)
+        p.fillPath(line_path, dot_color)
+
+    p.end()
+    return QIcon(px)
+
+
 def main() -> None:
     from PySide6.QtWidgets import QApplication
 
@@ -277,6 +331,7 @@ def main() -> None:
     app.setApplicationDisplayName("PyVBAai")
     app.setOrganizationName("PyVBAai")
     app.setOrganizationDomain("pyvbaai.local")
+    app.setWindowIcon(_make_app_icon())
 
     # Initialise debug logging early so all subsequent code can log
     from app.logger import init_logging

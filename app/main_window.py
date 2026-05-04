@@ -406,7 +406,8 @@ class MainWindow(QMainWindow):
             "_VBA code generated. Open the dialog to copy and paste into Excel (Alt+F11)._",
             "system",
         )
-        dlg = VBADialog(vba_changes, self)
+        file_path = self._wb.file_path if self._wb else None
+        dlg = VBADialog(vba_changes, self, file_path=file_path)
         dlg.exec()
 
     def _on_write_error(self, err: str) -> None:
@@ -455,8 +456,7 @@ class MainWindow(QMainWindow):
         if self._wb:
             self._status_file_lbl.setText(
                 f"  {self._wb.name}  |  "
-                f"{len(self._wb.sheets)} sheets  |  "
-                f"{len(self._wb.vba_modules)} VBA modules"
+                f"{len(self._wb.sheets)} sheets"
             )
             config = SettingsDialog.load_context_config()
             tokens = estimate_tokens(build_context(self._wb, config))

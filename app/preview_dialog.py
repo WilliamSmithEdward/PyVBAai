@@ -97,9 +97,9 @@ class ChangeCard(QFrame):
         # VBA diff (collapsible)
         if change.type in ("set_vba", "add_vba_module") and p.get("code"):
             diff_html = _make_vba_diff(old_vba or "", p["code"])
-            btn = QPushButton("Show code diff")
+            btn = QPushButton("Show code summary")
             btn.setObjectName("ghostBtn")
-            btn.setFixedWidth(130)
+            btn.setFixedWidth(155)
             diff_view = QTextBrowser()
             diff_view.setObjectName("codeViewer")
             diff_view.setHtml(diff_html)
@@ -108,7 +108,7 @@ class ChangeCard(QFrame):
 
             def _toggle(checked=False, dv=diff_view, b=btn):
                 dv.setVisible(not dv.isVisible())
-                b.setText("Hide code diff" if dv.isVisible() else "Show code diff")
+                b.setText("Hide code summary" if dv.isVisible() else "Show code summary")
 
             btn.clicked.connect(_toggle)
             layout.addWidget(btn)
@@ -277,7 +277,27 @@ class PreviewDialog(QDialog):
         cards_layout.setSpacing(8)
         cards_layout.setContentsMargins(0, 0, 4, 0)
 
-        for change in self._response.changes:
+        _VBA_OPS = {"set_vba", "add_vba_module", "delete_vba_module"}
+        vba_changes = [c for c in self._response.changes if c.type in _VBA_OPS]
+        other_changes = [c for c in self._response.changes if c.type not in _VBA_OPS]
+
+        # VBA action-required banner
+        if vba_changes:
+            banner = QLabel(
+                "\u26a0\ufe0f  <b>ACTION REQUIRED:</b> "
+                f"{len(vba_changes)} VBA change{'s' if len(vba_changes) != 1 else ''} "
+                "must be pasted manually into Excel \u2014 "
+                "a step-by-step guide will appear after you click Apply."
+            )
+            banner.setWordWrap(True)
+            banner.setTextFormat(Qt.TextFormat.RichText)
+            banner.setStyleSheet(
+                "background: #92400e; color: #fef3c7; "
+                "border-radius: 6px; padding: 10px 14px; font-size: 13px;"
+            )
+            cards_layout.addWidget(banner)
+
+        for change in vba_changes + other_changes:
             module_name = change.params.get("module") or change.params.get("name", "")
             old_code = self._vba_map.get(module_name, "")
             card = ChangeCard(change, old_vba=old_code)
@@ -347,3 +367,4 @@ class PreviewDialog(QDialog):
             if note:
                 self.revise_requested.emit(note)
                 self.reject()
+
