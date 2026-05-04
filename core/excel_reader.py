@@ -107,7 +107,7 @@ def read_workbook(file_path: str, config: ContextConfig | None = None) -> Workbo
         # DispatchEx always spawns a new Excel process; Dispatch may reuse a
         # lingering/zombie instance from the ROT and hang indefinitely.
         excel = win32.DispatchEx("Excel.Application")
-        excel.Visible = False
+        excel.Visible = True   # must be visible during Open — headless blocks on OneDrive sync
         excel.DisplayAlerts = False
         excel.ScreenUpdating = False
         excel.EnableEvents = False
@@ -124,6 +124,7 @@ def read_workbook(file_path: str, config: ContextConfig | None = None) -> Workbo
             ReadOnly=True,
             IgnoreReadOnlyRecommended=True,
         )
+        excel.Visible = False  # hide after open succeeds
 
         # ── Sheets ──────────────────────────────────────────────────────────
         for i in range(1, wb.Worksheets.Count + 1):

@@ -65,7 +65,7 @@ def apply_changes(file_path: str, changes: list[Change]) -> str:
         # DispatchEx always spawns a new Excel process; Dispatch may reuse a
         # lingering/zombie instance from the ROT and hang indefinitely.
         excel = win32.DispatchEx("Excel.Application")
-        excel.Visible = False
+        excel.Visible = True   # must be visible during Open — headless blocks on OneDrive sync
         excel.DisplayAlerts = False
         excel.ScreenUpdating = False
         excel.EnableEvents = False
@@ -77,6 +77,7 @@ def apply_changes(file_path: str, changes: list[Change]) -> str:
             pass
 
         wb = excel.Workbooks.Open(file_path, UpdateLinks=False, ReadOnly=False)
+        excel.Visible = False  # hide after open succeeds
 
         for change in changes:
             _dispatch(wb, change)
