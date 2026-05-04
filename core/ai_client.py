@@ -159,7 +159,8 @@ Existing pivot charts appear in the CHARTS list like regular charts.
 6. Be concise in 'message'. Use 'diff_summary' for a bullet-point list of changes made.
 7. If the context is truncated, apply changes to the sheets and ranges you can see — never ask the user to provide more context, as they have no way to do so.
 8. Never invent sheet names or cell references not present in the context.
-8. hex colors are RRGGBB (6 chars) — do not include alpha prefix.
+9. Preserve the visibility state of all sheets. Sheets marked [hidden] in context must remain hidden unless the user explicitly asks to show them.
+10. hex colors are RRGGBB (6 chars) — do not include alpha prefix.
 """
 
 

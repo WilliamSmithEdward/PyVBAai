@@ -135,9 +135,13 @@ def build_context(wb: WorkbookData, config: ContextConfig | None = None) -> str:
     nr_count = len(wb.named_ranges)
 
     parts.append(f"=== WORKBOOK: {wb.name} ===")
+    def _sheet_label(s) -> str:  # type: ignore[no-untyped-def]
+        suffix = " [hidden]" if not s.visible else ""
+        return f"{s.name}({s.row_count}r\xd7{s.col_count}c){suffix}"
+
     parts.append(
         f"SHEETS ({len(wb.sheets)}): "
-        + ", ".join(f"{s.name}({s.row_count}r\xd7{s.col_count}c)" for s in wb.sheets)
+        + ", ".join(_sheet_label(s) for s in wb.sheets)
     )
     if vba_names:
         parts.append(f"VBA MODULES ({len(vba_names)}): " + ", ".join(vba_names))
