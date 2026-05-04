@@ -40,7 +40,8 @@ class _AppStyle(QProxyStyle):
             super().drawPrimitive(element, option, painter, widget)
             return
 
-        checked = bool(option.state & QStyle.StateFlag.State_On)
+        checked  = bool(option.state & QStyle.StateFlag.State_On)
+        partial  = bool(option.state & QStyle.StateFlag.State_NoChange)
         r = option.rect.adjusted(2, 2, -2, -2)
         p = self._palette
         accent = QColor(p["accent"])
@@ -52,6 +53,7 @@ class _AppStyle(QProxyStyle):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         if checked:
+            # Fully checked: solid accent fill + white checkmark
             painter.setPen(QPen(accent, 1.0))
             painter.setBrush(QBrush(accent))
             painter.drawRoundedRect(r, 3, 3)
@@ -64,7 +66,20 @@ class _AppStyle(QProxyStyle):
                              int(x + w * 0.42), int(y + h * 0.76))
             painter.drawLine(int(x + w * 0.42), int(y + h * 0.76),
                              int(x + w * 0.82), int(y + h * 0.24))
+        elif partial:
+            # Partially checked: accent border + accent dash bar
+            painter.setPen(QPen(accent, 1.5))
+            painter.setBrush(QBrush(bg_off))
+            painter.drawRoundedRect(r, 3, 3)
+            x, y, w, h = r.x(), r.y(), r.width(), r.height()
+            bar_y = y + h // 2
+            pen = QPen(accent, 2.5, Qt.PenStyle.SolidLine,
+                       Qt.PenCapStyle.RoundCap)
+            painter.setPen(pen)
+            painter.drawLine(int(x + w * 0.22), bar_y,
+                             int(x + w * 0.78), bar_y)
         else:
+            # Unchecked: muted fill + border
             painter.setPen(QPen(border_off, 1.5))
             painter.setBrush(QBrush(bg_off))
             painter.drawRoundedRect(r, 3, 3)
